@@ -9,6 +9,9 @@ class ConfigError(ValueError):
     pass
 
 
+SYNOLOGY_HOST_PATH_MESSAGE = "MUSIC_DIR is a container path. Use HOST_MUSIC_DIR=/volume1/... and keep MUSIC_DIR=/music."
+
+
 def parse_user_ids(raw: str | None) -> set[int]:
     if not raw:
         return set()
@@ -34,6 +37,7 @@ class Settings:
     ytdlp_cookies_file: Path | None = None
     max_download_seconds: int = 900
     max_collection_tracks: int = 100
+    upload_batch_window_seconds: float = 2.0
     log_level: str = "INFO"
 
     @classmethod
@@ -57,14 +61,26 @@ class Settings:
             max_collection_tracks = int(max_collection_tracks_raw)
         except ValueError as exc:
             raise ConfigError("MAX_COLLECTION_TRACKS must be an integer") from exc
+        upload_batch_window_raw = os.environ.get("UPLOAD_BATCH_WINDOW_SECONDS", "2").strip()
+        try:
+            upload_batch_window_seconds = float(upload_batch_window_raw)
+        except ValueError as exc:
+            raise ConfigError("UPLOAD_BATCH_WINDOW_SECONDS must be a number") from exc
+        if upload_batch_window_seconds < 0:
+            raise ConfigError("UPLOAD_BATCH_WINDOW_SECONDS must be non-negative")
+
+        music_dir = Path(os.environ.get("MUSIC_DIR", "/music"))
+        if str(music_dir).startswith("/volume1"):
+            raise ConfigError(SYNOLOGY_HOST_PATH_MESSAGE)
 
         return cls(
             telegram_bot_token=token,
             allowed_telegram_user_ids=allowed,
-            music_dir=Path(os.environ.get("MUSIC_DIR", "/music")),
+            music_dir=music_dir,
             download_tmp_dir=Path(os.environ.get("DOWNLOAD_TMP_DIR", "/tmp/sync-me-maybe")),
             ytdlp_cookies_file=Path(cookies) if cookies else None,
             max_download_seconds=max_download_seconds,
             max_collection_tracks=max_collection_tracks,
+            upload_batch_window_seconds=upload_batch_window_seconds,
             log_level=os.environ.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         )

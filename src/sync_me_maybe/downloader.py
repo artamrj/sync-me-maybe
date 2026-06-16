@@ -6,7 +6,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yt_dlp
 
@@ -31,13 +31,20 @@ class YtDlpDownloader:
         self.cookies_file = cookies_file
         self.max_seconds = max_seconds
 
-    async def download(self, resolved: ResolvedTrack) -> DownloadedTrack:
-        return await asyncio.to_thread(self._download_sync, resolved)
+    async def download(self, resolved: ResolvedTrack, cancel_check: Callable[[], bool] | None = None) -> DownloadedTrack:
+        return await asyncio.to_thread(self._download_sync, resolved, cancel_check)
 
-    def _download_sync(self, resolved: ResolvedTrack) -> DownloadedTrack:
+    def _download_sync(self, resolved: ResolvedTrack, cancel_check: Callable[[], bool] | None = None) -> DownloadedTrack:
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         run_id = uuid.uuid4().hex
         output_template = str(self.tmp_dir / f"{run_id}.%(ext)s")
+
+        def check_cancel() -> None:
+            if cancel_check and cancel_check():
+                raise DownloadError("Cancelled by user.")
+
+        def progress_hook(_: dict[str, Any]) -> None:
+            check_cancel()
 
         options: dict[str, Any] = {
             "format": "bestaudio/best",
@@ -46,6 +53,7 @@ class YtDlpDownloader:
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": 30,
+            "progress_hooks": [progress_hook],
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
@@ -59,9 +67,17 @@ class YtDlpDownloader:
 
         start = time.monotonic()
         try:
+            check_cancel()
             with yt_dlp.YoutubeDL(options) as ydl:
                 info = ydl.extract_info(resolved.download_url, download=True)
+            check_cancel()
+        except DownloadError:
+            for path in self.tmp_dir.glob(f"{run_id}*"):
+                path.unlink(missing_ok=True)
+            raise
         except Exception as exc:  # noqa: BLE001 - yt-dlp raises many concrete exception types.
+            for path in self.tmp_dir.glob(f"{run_id}*"):
+                path.unlink(missing_ok=True)
             raise DownloadError(f"Download failed: {exc}") from exc
 
         if time.monotonic() - start > self.max_seconds:

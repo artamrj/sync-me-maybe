@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -10,6 +11,8 @@ from typing import Any
 from uuid import uuid4
 
 from .urls import ClassifiedLink
+
+LOGGER = logging.getLogger(__name__)
 
 
 class JobKind(StrEnum):
@@ -41,6 +44,11 @@ class QueuedJob:
     parent_status_message_id: int | None = None
     batch_index: int | None = None
     batch_total: int | None = None
+    request_id: str | None = None
+    request_status_message_id: int | None = None
+    request_total: int | None = None
+    request_index: int | None = None
+    display_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +75,28 @@ class DownloadQueue:
         async with self._condition:
             return QueueSnapshot(self._active, tuple(self._pending))
 
+    async def position_of(self, job_id: str) -> int | None:
+        async with self._condition:
+            if self._active and self._active.id == job_id:
+                return 0
+            for index, job in enumerate(self._pending, start=1):
+                if job.id == job_id:
+                    return index + (1 if self._active else 0)
+            return None
+
+    async def cancel_request(self, request_id: str) -> int:
+        async with self._condition:
+            kept: deque[QueuedJob] = deque()
+            removed = 0
+            while self._pending:
+                job = self._pending.popleft()
+                if job.request_id == request_id:
+                    removed += 1
+                else:
+                    kept.append(job)
+            self._pending = kept
+            return removed
+
     def start(self, processor: Callable[[QueuedJob], Awaitable[None]]) -> None:
         if self._worker and not self._worker.done():
             return
@@ -80,6 +110,8 @@ class DownloadQueue:
             await self._worker
         except asyncio.CancelledError:
             pass
+        except Exception:  # noqa: BLE001 - do not crash shutdown because the worker already failed.
+            LOGGER.exception("Download queue worker stopped after an error")
 
     async def _run(self, processor: Callable[[QueuedJob], Awaitable[None]]) -> None:
         while True:
@@ -91,6 +123,10 @@ class DownloadQueue:
 
             try:
                 await processor(job)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - keep queue worker alive after one failed job.
+                LOGGER.exception("Download queue job failed unexpectedly: %s", job.source_label)
             finally:
                 async with self._condition:
                     if self._active is job:
@@ -99,15 +135,15 @@ class DownloadQueue:
 
 def render_queue_snapshot(snapshot: QueueSnapshot, limit: int = 5) -> str:
     if not snapshot.active and not snapshot.pending:
-        return "Queue is empty."
+        return "✅ Queue is empty."
 
     lines: list[str] = []
     if snapshot.active:
-        lines.append(f"Now: {snapshot.active.source_label}")
+        lines.append(f"⬇️ Now: {snapshot.active.source_label}")
     else:
-        lines.append("Now: idle")
+        lines.append("💤 Now: idle")
 
-    lines.append(f"Pending: {len(snapshot.pending)}")
+    lines.append(f"⏳ Pending: {len(snapshot.pending)}")
     for index, job in enumerate(snapshot.pending[:limit], start=1):
         lines.append(f"{index}. {job.source_label}")
 

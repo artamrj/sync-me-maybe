@@ -29,10 +29,22 @@ Create a Telegram bot with BotFather, copy `.env.example` to `.env`, and fill in
 TELEGRAM_BOT_TOKEN=123456:replace-me
 ALLOWED_TELEGRAM_USER_IDS=123456789
 SYNC_ME_MAYBE_VERSION=latest
-HOST_MUSIC_DIR=/path/to/nas/navidrome/import
+PUID=1026
+PGID=100
+HOST_MUSIC_DIR=/volume1/music/2-library/telegram-bot
+HOST_TMP_DIR=/volume1/docker/sync-me-maybe/tmp
+MAX_DOWNLOAD_SECONDS=900
+MAX_COLLECTION_TRACKS=100
+UPLOAD_BATCH_WINDOW_SECONDS=2
+LOG_LEVEL=INFO
 ```
 
 Find your Telegram user ID by running the bot and sending `/id`.
+On Synology, find the right user and group IDs with:
+
+```sh
+id your-synology-user
+```
 
 Start the service on your NAS or server:
 
@@ -41,6 +53,17 @@ docker compose up -d
 ```
 
 The Compose file pulls `ghcr.io/artamrj/sync-me-maybe:${SYNC_ME_MAYBE_VERSION:-latest}` and mounts `${HOST_MUSIC_DIR}` into the container as `/music`. Mount your NAS on the host first using your preferred SMB/NFS/system mount setup, then point `HOST_MUSIC_DIR` at that mounted folder.
+
+Do not set `MUSIC_DIR` or `DOWNLOAD_TMP_DIR` for the NAS Compose deployment. Host paths belong only in `HOST_MUSIC_DIR` and `HOST_TMP_DIR`; the container paths are fixed as `/music` and `/tmp/sync-me-maybe`.
+
+For a full NAS `.env` reference with examples and explanations, see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+Create the host folders before starting:
+
+```sh
+mkdir -p /volume1/music/2-library/telegram-bot
+mkdir -p /volume1/docker/sync-me-maybe/tmp
+```
 
 Use `SYNC_ME_MAYBE_VERSION=latest` if you want the newest image published from `main`. Use `SYNC_ME_MAYBE_VERSION=0.9.0` for a pinned release.
 
@@ -53,22 +76,7 @@ docker compose up -d
 
 ## Environment Variables
 
-Required:
-
-- `TELEGRAM_BOT_TOKEN`: Telegram bot token from BotFather.
-- `ALLOWED_TELEGRAM_USER_IDS`: comma-separated Telegram user IDs allowed to use the bot.
-- `HOST_MUSIC_DIR`: host path to the NAS/Navidrome import folder.
-
-Optional:
-
-- `SYNC_ME_MAYBE_VERSION`: image tag to deploy, default `latest`; set to a version like `0.9.0` for a pinned release.
-- `MUSIC_DIR`: container music path, default `/music`.
-- `DOWNLOAD_TMP_DIR`: temporary work directory, default `/tmp/sync-me-maybe`.
-- `HOST_TMP_DIR`: host path for temporary files, default `./tmp`.
-- `YTDLP_COOKIES_FILE`: optional cookies file path inside the container for YouTube Music.
-- `MAX_DOWNLOAD_SECONDS`: soft timeout limit, default `900`.
-- `MAX_COLLECTION_TRACKS`: maximum tracks to expand from one playlist or album, default `100`.
-- `LOG_LEVEL`: default `INFO`.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for every variable, why it exists, and an example value.
 
 ## Bot Commands
 

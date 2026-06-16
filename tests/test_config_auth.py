@@ -25,7 +25,47 @@ def test_settings_reads_collection_env(monkeypatch) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
     monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "123")
     monkeypatch.setenv("MAX_COLLECTION_TRACKS", "50")
+    monkeypatch.setenv("UPLOAD_BATCH_WINDOW_SECONDS", "1.5")
 
     settings = Settings.from_env()
 
     assert settings.max_collection_tracks == 50
+    assert settings.upload_batch_window_seconds == 1.5
+
+
+def test_settings_upload_batch_window_defaults_to_two(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
+    monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "123")
+    monkeypatch.delenv("UPLOAD_BATCH_WINDOW_SECONDS", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.upload_batch_window_seconds == 2
+
+
+def test_settings_rejects_invalid_upload_batch_window(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
+    monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "123")
+    monkeypatch.setenv("UPLOAD_BATCH_WINDOW_SECONDS", "-1")
+
+    with pytest.raises(ConfigError, match="UPLOAD_BATCH_WINDOW_SECONDS"):
+        Settings.from_env()
+
+
+def test_settings_rejects_synology_host_path_as_music_dir(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
+    monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "123")
+    monkeypatch.setenv("MUSIC_DIR", "/volume1/music/2-library/telegram-bot")
+
+    with pytest.raises(ConfigError, match="MUSIC_DIR is a container path"):
+        Settings.from_env()
+
+
+def test_settings_keeps_music_dir_container_default(monkeypatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
+    monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "123")
+    monkeypatch.delenv("MUSIC_DIR", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.music_dir.as_posix() == "/music"

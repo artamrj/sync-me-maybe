@@ -16,10 +16,7 @@ COPY src ./src
 RUN pip install --upgrade pip \
     && pip install .
 
-RUN useradd --create-home --uid 10001 appuser \
-    && mkdir -p /music /tmp/sync-me-maybe \
-    && chown -R appuser:appuser /music /tmp/sync-me-maybe
-
-USER appuser
+RUN mkdir -p /music /tmp/sync-me-maybe \
+    && chmod 0775 /music /tmp/sync-me-maybe
 
 CMD ["sync-me-maybe"]
