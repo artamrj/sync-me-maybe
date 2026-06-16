@@ -1,0 +1,17 @@
+services:
+  sync-me-maybe:
+    build: .
+    container_name: sync-me-maybe
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MUSIC_DIR: ${MUSIC_DIR:-/music}
+      DOWNLOAD_TMP_DIR: ${DOWNLOAD_TMP_DIR:-/tmp/sync-me-maybe}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ${HOST_MUSIC_DIR:-./music}:/music
+      - ${HOST_TMP_DIR:-./tmp}:/tmp/sync-me-maybe
+      # Optional: mount a cookies file if YTDLP_COOKIES_FILE points to it.
+      # - ./cookies.txt:/cookies.txt:ro

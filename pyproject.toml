@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sync-me-maybe"
+version = "0.1.0"
+description = "Telegram bot that syncs music links and uploads to a NAS folder for Navidrome."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "beautifulsoup4>=4.12.3",
+  "python-telegram-bot>=22.0,<23.0",
+  "requests>=2.32.3",
+  "yt-dlp>=2025.1.15",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.4",
+  "pytest-mock>=3.14.0",
+]
+
+[project.scripts]
+sync-me-maybe = "sync_me_maybe.bot:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
