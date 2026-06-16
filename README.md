@@ -28,18 +28,28 @@ Create a Telegram bot with BotFather, copy `.env.example` to `.env`, and fill in
 ```sh
 TELEGRAM_BOT_TOKEN=123456:replace-me
 ALLOWED_TELEGRAM_USER_IDS=123456789
+SYNC_ME_MAYBE_VERSION=latest
 HOST_MUSIC_DIR=/path/to/nas/navidrome/import
 ```
 
 Find your Telegram user ID by running the bot and sending `/id`.
 
-Start the service:
+Start the service on your NAS or server:
 
 ```sh
-docker compose up --build
+docker compose up -d
 ```
 
-The Compose file mounts `${HOST_MUSIC_DIR}` into the container as `/music`. Mount your NAS on the host first using your preferred SMB/NFS/system mount setup, then point `HOST_MUSIC_DIR` at that mounted folder.
+The Compose file pulls `ghcr.io/artamrj/sync-me-maybe:${SYNC_ME_MAYBE_VERSION:-latest}` and mounts `${HOST_MUSIC_DIR}` into the container as `/music`. Mount your NAS on the host first using your preferred SMB/NFS/system mount setup, then point `HOST_MUSIC_DIR` at that mounted folder.
+
+Use `SYNC_ME_MAYBE_VERSION=latest` if you want the newest image published from `main`. Use `SYNC_ME_MAYBE_VERSION=0.9.0` for a pinned release.
+
+To update a NAS deployment:
+
+```sh
+docker compose pull
+docker compose up -d
+```
 
 ## Environment Variables
 
@@ -51,6 +61,7 @@ Required:
 
 Optional:
 
+- `SYNC_ME_MAYBE_VERSION`: image tag to deploy, default `latest`; set to a version like `0.9.0` for a pinned release.
 - `MUSIC_DIR`: container music path, default `/music`.
 - `DOWNLOAD_TMP_DIR`: temporary work directory, default `/tmp/sync-me-maybe`.
 - `HOST_TMP_DIR`: host path for temporary files, default `./tmp`.
@@ -72,9 +83,22 @@ If a message contains multiple links, each supported link becomes its own queue 
 
 ## Local Development
 
+The default Compose file pulls the published GHCR image. For local source builds, add the dev override:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
 ```sh
 python -m venv .venv
 . .venv/bin/activate
 pip install -e ".[dev]"
 pytest
 ```
+
+## Container Images
+
+GitHub Actions publishes images to GitHub Container Registry:
+
+- `ghcr.io/artamrj/sync-me-maybe:0.9.0`: tag matching the project version in `pyproject.toml`.
+- `ghcr.io/artamrj/sync-me-maybe:latest`: latest successful build from `main`.
