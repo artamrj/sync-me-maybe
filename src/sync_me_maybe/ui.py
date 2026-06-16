@@ -10,6 +10,7 @@ class StatusStage(StrEnum):
     THINKING = "Thinking"
     DOWNLOADING = "Downloading"
     SAVING = "Saving"
+    EXPANDING = "Expanding"
 
 
 def render_welcome(authorized: bool) -> str:
@@ -17,9 +18,9 @@ def render_welcome(authorized: bool) -> str:
     return (
         "sync-me-maybe\n\n"
         f"Status: {status}\n"
-        "Send a single-track YouTube Music, Spotify, Apple Music, or Shazam link.\n"
+        "Send music links, playlist links, album links, or an audio file.\n"
         "You can also upload an audio file.\n\n"
-        "Commands: /help /id /health"
+        "Commands: /help /id /health /queue"
     )
 
 
@@ -29,17 +30,19 @@ def render_help() -> str:
         "1. Send one music link or one audio file.\n"
         "2. I resolve, download, and save it to your music folder.\n"
         "3. Duplicates are skipped automatically.\n\n"
-        "Supported links: YouTube Music, Spotify tracks, Apple Music tracks, Shazam.\n"
-        "Playlists and albums are not supported in v1."
+        "Supported links: YouTube Music, Spotify, Apple Music, and Shazam tracks.\n"
+        "Playlists/albums are supported for YouTube, Spotify, and Apple Music when public track data is available."
     )
 
 
-def render_status(stage: StatusStage, source: str, detail: str | None = None) -> str:
+def render_status(stage: StatusStage, source: str, detail: str | None = None, position: int | None = None) -> str:
     lines = [
         f"{stage.value}",
         "",
         f"Source: {source}",
     ]
+    if position is not None:
+        lines.append(f"Position: {position}")
     if detail:
         lines.extend(["", detail])
     return "\n".join(lines)
@@ -52,6 +55,23 @@ def render_success(relative_path: str, skipped: bool = False) -> str:
 
 def render_error(message: str) -> str:
     return f"Failed\n\n{message}"
+
+
+def render_collection_progress(source: str, total: int | None = None, queued: int = 0, completed: int = 0, skipped: int = 0, failed: int = 0) -> str:
+    lines = ["Collection", "", f"Source: {source}"]
+    if total is None:
+        lines.append("Status: detecting tracks")
+    else:
+        lines.extend(
+            [
+                f"Tracks: {total}",
+                f"Queued: {queued}",
+                f"Completed: {completed}",
+                f"Skipped: {skipped}",
+                f"Failed: {failed}",
+            ]
+        )
+    return "\n".join(lines)
 
 
 def status_keyboard(

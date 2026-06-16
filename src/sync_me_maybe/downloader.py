@@ -87,7 +87,7 @@ def _track_info(info: dict[str, Any], resolved: ResolvedTrack) -> TrackInfo:
     title = resolved.title or _string(info.get("track")) or _string(info.get("title"))
     artist = resolved.artist or _string(info.get("artist")) or _string(info.get("uploader"))
     album = resolved.album or _string(info.get("album"))
-    track_number = _int(info.get("track_number"))
+    track_number = resolved.track_number or _int(info.get("track_number"))
 
     if title and not resolved.title:
         title = _strip_youtube_noise(title)

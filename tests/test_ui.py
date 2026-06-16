@@ -11,9 +11,10 @@ def test_render_welcome_shows_authorization() -> None:
 
 
 def test_render_status_contains_stage_source_and_detail() -> None:
-    text = render_status(StatusStage.DOWNLOADING, "spotify", "Artist Song")
+    text = render_status(StatusStage.DOWNLOADING, "spotify", "Artist Song", position=2)
     assert "Downloading" in text
     assert "Source: spotify" in text
+    assert "Position: 2" in text
     assert "Artist Song" in text
 
 

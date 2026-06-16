@@ -33,6 +33,7 @@ class Settings:
     download_tmp_dir: Path
     ytdlp_cookies_file: Path | None = None
     max_download_seconds: int = 900
+    max_collection_tracks: int = 100
     log_level: str = "INFO"
 
     @classmethod
@@ -51,6 +52,11 @@ class Settings:
             max_download_seconds = int(max_seconds)
         except ValueError as exc:
             raise ConfigError("MAX_DOWNLOAD_SECONDS must be an integer") from exc
+        max_collection_tracks_raw = os.environ.get("MAX_COLLECTION_TRACKS", "100").strip()
+        try:
+            max_collection_tracks = int(max_collection_tracks_raw)
+        except ValueError as exc:
+            raise ConfigError("MAX_COLLECTION_TRACKS must be an integer") from exc
 
         return cls(
             telegram_bot_token=token,
@@ -59,5 +65,6 @@ class Settings:
             download_tmp_dir=Path(os.environ.get("DOWNLOAD_TMP_DIR", "/tmp/sync-me-maybe")),
             ytdlp_cookies_file=Path(cookies) if cookies else None,
             max_download_seconds=max_download_seconds,
+            max_collection_tracks=max_collection_tracks,
             log_level=os.environ.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         )
