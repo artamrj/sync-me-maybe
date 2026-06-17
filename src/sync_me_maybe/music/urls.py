@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import StrEnum
-from urllib.parse import parse_qs, urlparse
 
 
 class LinkKind(StrEnum):
@@ -52,34 +51,12 @@ def extract_urls(text: str | None) -> list[str]:
 
 
 def classify_url(url: str) -> ClassifiedLink:
-    parsed = urlparse(url)
-    host = parsed.netloc.lower()
-    path = parsed.path.lower()
+    from sync_me_maybe.music.providers.registry import build_providers
 
-    if host.startswith("www."):
-        host = host[4:]
-
-    if host in {"youtu.be", "youtube.com", "m.youtube.com", "music.youtube.com"}:
-        if "list" in parse_qs(parsed.query) and "v" not in parse_qs(parsed.query):
-            return ClassifiedLink(LinkKind.YOUTUBE, url, LinkScope.PLAYLIST)
-        return ClassifiedLink(LinkKind.YOUTUBE, url)
-
-    if host in {"open.spotify.com", "spotify.link"}:
-        if "/playlist/" in path:
-            return ClassifiedLink(LinkKind.SPOTIFY, url, LinkScope.PLAYLIST)
-        if "/album/" in path:
-            return ClassifiedLink(LinkKind.SPOTIFY, url, LinkScope.ALBUM)
-        return ClassifiedLink(LinkKind.SPOTIFY, url)
-
-    if host in {"music.apple.com", "itunes.apple.com"}:
-        if "/album/" in path and "i" not in parse_qs(parsed.query):
-            return ClassifiedLink(LinkKind.APPLE_MUSIC, url, LinkScope.ALBUM)
-        if "/playlist/" in path:
-            return ClassifiedLink(LinkKind.APPLE_MUSIC, url, LinkScope.PLAYLIST)
-        return ClassifiedLink(LinkKind.APPLE_MUSIC, url)
-
-    if host.endswith("shazam.com"):
-        return ClassifiedLink(LinkKind.SHAZAM, url)
+    for provider in build_providers():
+        classified = provider.classify(url)
+        if classified:
+            return classified
 
     return ClassifiedLink(
         LinkKind.UNSUPPORTED,

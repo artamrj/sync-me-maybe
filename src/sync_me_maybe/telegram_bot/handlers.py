@@ -293,7 +293,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         resolved = (
             job.resolved_track
             if isinstance(job.resolved_track, ResolvedTrack)
-            else runtime.resolver.resolve(classified)
+            else await runtime.resolver.resolve(classified)
         )
         await safe_chat_action(bot, job.chat_id, ChatAction.UPLOAD_DOCUMENT)
         if request:

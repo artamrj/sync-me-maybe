@@ -1,0 +1,212 @@
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import requests
+import yt_dlp
+from bs4 import BeautifulSoup
+
+from sync_me_maybe.music.filenames import clean_title
+from sync_me_maybe.music.providers.base import TrackSearchItem
+from sync_me_maybe.music.providers.common import int_or_none
+
+
+class PublicCollectionScraper:
+    def __init__(self, timeout_seconds: int = 20) -> None:
+        self.timeout_seconds = timeout_seconds
+
+    def collection(self, url: str) -> list[TrackSearchItem]:
+        tracks = self.yt_dlp_entries(url)
+        if tracks:
+            return tracks
+        return self.html_entries(url)
+
+    def yt_dlp_entries(self, url: str) -> list[TrackSearchItem]:
+        options: dict[str, Any] = {
+            "extract_flat": "in_playlist",
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "noplaylist": False,
+        }
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception:  # noqa: BLE001 - public metadata extraction is best-effort.
+            return []
+        return tracks_from_entries((info or {}).get("entries") or [])
+
+    def html_entries(self, url: str) -> list[TrackSearchItem]:
+        try:
+            response = requests.get(
+                url, timeout=self.timeout_seconds, headers={"User-Agent": "Mozilla/5.0"}
+            )
+            response.raise_for_status()
+        except requests.RequestException:
+            return []
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        json_roots: list[Any] = []
+        for script in soup.find_all("script"):
+            text = script.string or script.get_text()
+            if not text:
+                continue
+            script_type = str(script.get("type") or "").lower()
+            script_id = str(script.get("id") or "")
+            if "json" in script_type or script_id == "__NEXT_DATA__":
+                parsed = loads_json(text)
+                if parsed is not None:
+                    json_roots.append(parsed)
+
+        if not json_roots:
+            json_roots.extend(extract_balanced_json_objects(response.text))
+
+        tracks: list[TrackSearchItem] = []
+        for root in json_roots:
+            tracks.extend(walk_track_items(root))
+        return dedupe_tracks(tracks)
+
+
+def artists(artists_value: Any) -> str | None:
+    if isinstance(artists_value, dict):
+        return clean_title(artists_value.get("name") or artists_value.get("artistName"))
+    if not isinstance(artists_value, list):
+        return clean_title(str(artists_value)) if artists_value else None
+    names = [
+        clean_title(artist.get("name") or artist.get("artistName"))
+        for artist in artists_value
+        if isinstance(artist, dict)
+    ]
+    return ", ".join(name for name in names if name) or None
+
+
+def tracks_from_entries(entries: list[Any]) -> list[TrackSearchItem]:
+    tracks: list[TrackSearchItem] = []
+    for index, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            continue
+        title = clean_title(entry.get("track") or entry.get("title") or entry.get("name"))
+        if not title:
+            continue
+        tracks.append(
+            TrackSearchItem(
+                title=title,
+                artist=clean_title(
+                    entry.get("artist") or entry.get("uploader") or entry.get("creator")
+                ),
+                album=clean_title(entry.get("album") or entry.get("albumName")),
+                track_number=int_or_none(entry.get("track_number") or entry.get("trackNumber"))
+                or index,
+                source_url=entry.get("url") or entry.get("webpage_url"),
+            )
+        )
+    return dedupe_tracks(tracks)
+
+
+def walk_track_items(value: Any) -> list[TrackSearchItem]:
+    tracks: list[TrackSearchItem] = []
+    if isinstance(value, dict):
+        track = track_from_dict(value)
+        if track:
+            tracks.append(track)
+        for child in value.values():
+            tracks.extend(walk_track_items(child))
+    elif isinstance(value, list):
+        for child in value:
+            tracks.extend(walk_track_items(child))
+    return tracks
+
+
+def track_from_dict(value: dict[str, Any]) -> TrackSearchItem | None:
+    attrs = value.get("attributes")
+    attrs = attrs if isinstance(attrs, dict) else {}
+    source = {**value, **attrs}
+    type_value = str(source.get("@type") or source.get("type") or "").casefold()
+    title = clean_title(source.get("title") or source.get("name") or source.get("trackName"))
+    artist = clean_title(source.get("artistName"))
+    if not artist:
+        artist = artists(source.get("byArtist") or source.get("artists") or source.get("artist"))
+    album = clean_title(source.get("albumName") or source.get("album"))
+    track_number = int_or_none(
+        source.get("trackNumber") or source.get("track_number") or source.get("position")
+    )
+    external_urls = source.get("external_urls")
+    external_urls = external_urls if isinstance(external_urls, dict) else {}
+    url = source.get("url") or external_urls.get("spotify")
+
+    if not title:
+        return None
+    if (
+        not artist
+        and "musicrecording" not in type_value
+        and "track" not in type_value
+        and not track_number
+    ):
+        return None
+    return TrackSearchItem(
+        title=title, artist=artist, album=album, track_number=track_number, source_url=url
+    )
+
+
+def dedupe_tracks(tracks: list[TrackSearchItem]) -> list[TrackSearchItem]:
+    deduped: list[TrackSearchItem] = []
+    seen: set[tuple[str, str]] = set()
+    for track in tracks:
+        key = ((track.artist or "").casefold(), track.title.casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(track)
+    return deduped
+
+
+def loads_json(text: str) -> Any | None:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def extract_balanced_json_objects(text: str) -> list[Any]:
+    roots: list[Any] = []
+    for marker in ('"tracks"', '"trackList"', '"trackName"', '"artistName"'):
+        start = 0
+        while True:
+            index = text.find(marker, start)
+            if index == -1:
+                break
+            brace = text.rfind("{", 0, index)
+            if brace == -1:
+                start = index + len(marker)
+                continue
+            parsed = loads_json(balanced_object(text, brace))
+            if parsed is not None:
+                roots.append(parsed)
+            start = index + len(marker)
+    return roots
+
+
+def balanced_object(text: str, start: int) -> str:
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return text[start:]

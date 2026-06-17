@@ -466,7 +466,7 @@ The queue is not persisted. It is lost on restart.
 
 Directory: `src/sync_me_maybe/music`
 
-This package owns URL extraction/classification, metadata resolution, collection expansion, filename cleanup, and audio download.
+This package owns URL extraction, provider dispatch, metadata resolution, collection expansion, filename cleanup, and audio download.
 
 ### `music.urls`
 
@@ -503,6 +503,9 @@ URL extraction:
 
 Classification:
 
+- `classify_url` delegates provider-specific host and scope detection to the provider registry.
+- The current registry order is YouTube, Spotify, Apple Music, and Shazam.
+
 - YouTube hosts:
   - `youtu.be`
   - `youtube.com`
@@ -530,7 +533,7 @@ Scope detection:
 
 File: `src/sync_me_maybe/music/resolver.py`
 
-This module resolves single-track links into download instructions.
+This module is a compatibility facade for resolving single-track links into download instructions.
 
 Main names:
 
@@ -550,6 +553,7 @@ Main names:
 
 Resolver behavior:
 
+- `LinkResolver` delegates provider-specific resolution to the provider registry.
 - YouTube links return `download_url=classified.url`.
 - Spotify, Apple Music, and Shazam links become YouTube search URLs using `ytsearch1:<query>`.
 - Spotify first tries `https://open.spotify.com/oembed`.
@@ -572,7 +576,7 @@ Failures:
 
 File: `src/sync_me_maybe/music/collections.py`
 
-This module expands playlist and album links into individual track search items.
+This module is a compatibility facade for expanding playlist and album links into individual track search items.
 
 Main names:
 
@@ -593,6 +597,8 @@ Main names:
 Expansion behavior:
 
 - Track-scoped links are rejected.
+- `CollectionResolver` delegates provider-specific expansion to the provider registry.
+- Empty collection and `MAX_COLLECTION_TRACKS` checks are enforced centrally here.
 - YouTube playlists are expanded with `yt-dlp` flat playlist extraction.
 - Spotify collections use public extraction.
 - Apple Music collections use public extraction.
@@ -610,9 +616,42 @@ Safety limit:
 
 - If extracted track count exceeds `MAX_COLLECTION_TRACKS`, expansion fails.
 
-Dedupe:
+Provider-local dedupe:
 
 - Tracks are deduplicated by case-insensitive `(artist, title)`.
+
+### `music.providers`
+
+Directory: `src/sync_me_maybe/music/providers`
+
+This package owns provider-specific classification, track resolution, and collection expansion.
+
+Main files:
+
+- `base.py`: provider protocol, shared provider errors, `ResolvedTrack`, and `TrackSearchItem`.
+- `registry.py`: explicit provider construction and kind-based lookup.
+- `youtube.py`: YouTube classification, direct track resolution, and playlist expansion.
+- `spotify.py`: Spotify classification, oEmbed/page/slug track resolution, and collection expansion.
+- `apple.py`: Apple Music classification, slug-based track resolution, and collection expansion.
+- `shazam.py`: Shazam classification and track resolution.
+- `public_scrape.py`: shared best-effort public collection extraction for Spotify and Apple Music.
+
+Provider interface:
+
+```python
+class Provider:
+    kind: LinkKind
+
+    def classify(url) -> ClassifiedLink | None: ...
+    async def resolve_track(link) -> ResolvedTrack: ...
+    async def expand_collection(link) -> list[TrackSearchItem]: ...
+```
+
+Provider implementation details:
+
+- Blocking metadata, scraping, and `yt-dlp` work is wrapped by provider methods with `asyncio.to_thread`.
+- Unsupported provider capabilities raise provider errors that resolver facades convert into user-facing resolver errors.
+- Spotify and Apple public-page scraping is isolated under provider code because those page structures are fragile.
 
 ### `music.downloader`
 
@@ -1074,7 +1113,7 @@ Network behavior:
 - Spotify and Apple Music collection expansion is best-effort and can break when public page structures change.
 - Search-based provider resolution can download an incorrect YouTube match.
 - Telegram uploads are not transcoded or metadata-normalized.
-- There are no tests in the current repository tree.
+- Provider refactor tests cover classification, resolver fallbacks, public scraping helpers, YouTube playlist expansion, and collection limits.
 - `src/sync_me_maybe/__init__.py` reports `__version__ = "0.1.0"` while `pyproject.toml` declares project version `0.9.0`.
 
 ## 18. Extension Points
@@ -1082,9 +1121,9 @@ Network behavior:
 Add a new provider:
 
 1. Add a `LinkKind` value in `music.urls`.
-2. Update `classify_url`.
-3. Add single-track query logic in `LinkResolver._query_for`.
-4. Add collection expansion in `CollectionResolver._expand_sync` if playlists/albums are supported.
+2. Add a provider module under `music.providers`.
+3. Implement provider classification, `resolve_track`, and `expand_collection`.
+4. Register the provider in `music.providers.registry`.
 5. Update README/help text if user-facing support changes.
 
 Add another storage layout:
@@ -1159,13 +1198,16 @@ src/sync_me_maybe/queueing/queue.py
   In-memory serialized job queue.
 
 src/sync_me_maybe/music/urls.py
-  URL extraction and provider/scope classification.
+  URL extraction and classification dispatch.
 
 src/sync_me_maybe/music/resolver.py
-  Single-link metadata and search-query resolution.
+  Single-link provider resolution facade.
 
 src/sync_me_maybe/music/collections.py
-  Playlist and album expansion.
+  Playlist and album provider expansion facade.
+
+src/sync_me_maybe/music/providers/
+  Provider-specific classification, metadata lookup, scraping, and collection expansion.
 
 src/sync_me_maybe/music/downloader.py
   yt-dlp download and MP3 conversion.
@@ -1195,4 +1237,3 @@ Telegram updates
 ```
 
 The central design choice is a single in-memory runtime with a single queue worker. This keeps the implementation understandable and avoids concurrent file writes or conflicting Telegram status edits. The tradeoff is that all work is serialized and volatile across restarts.
-
