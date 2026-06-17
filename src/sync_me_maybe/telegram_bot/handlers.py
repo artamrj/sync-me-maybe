@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from uuid import uuid4
 
@@ -30,7 +31,7 @@ from sync_me_maybe.telegram_bot.requests import (
     request_keyboard,
     update_request,
 )
-from sync_me_maybe.telegram_bot.runtime import BotRuntime, RequestState
+from sync_me_maybe.telegram_bot.runtime import BotRuntime, BufferedLink, LinkBatch, RequestState
 from sync_me_maybe.telegram_bot.safe_api import (
     safe_chat_action,
     safe_edit_message,
@@ -95,6 +96,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
+    if runtime.settings.upload_batch_window_seconds > 0:
+        await buffer_link_request(
+            update,
+            runtime,
+            context.application,
+            classified_links,
+            unsupported,
+            link_total=len(urls),
+        )
+        return
+
     if len(classified_links) == 1 and not unsupported:
         index, classified = classified_links[0]
         if classified.scope == LinkScope.TRACK:
@@ -106,6 +118,127 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     await enqueue_link_batch(update, runtime, classified_links, unsupported, link_total=len(urls))
+
+
+async def buffer_link_request(
+    update: Update,
+    runtime: BotRuntime,
+    application: Application,
+    classified_links,
+    unsupported: list[str],
+    link_total: int,
+) -> None:
+    """Collect nearby link messages and enqueue them as one visible request."""
+    message = update.effective_message
+    assert message is not None
+    user_id = message.from_user.id if message.from_user else 0
+    key = (message.chat_id, user_id)
+    buffered_links = [
+        BufferedLink(message.chat_id, message.message_id, user_id, link_index, classified)
+        for link_index, classified in classified_links
+    ]
+    batch = runtime.link_batches.get(key)
+    if not batch:
+        request_id = uuid4().hex
+        title = link_batch_title(len(buffered_links))
+        detail = "\n".join(unsupported) if unsupported else None
+        status_message = await message.reply_text(
+            render_request(
+                RequestView(
+                    title=title,
+                    stage=StatusStage.QUEUED,
+                    total=len(buffered_links) + len(unsupported),
+                    failed=len(unsupported),
+                    detail=detail,
+                )
+            ),
+            reply_to_message_id=message.message_id,
+            allow_sending_without_reply=True,
+        )
+        request = RequestState(
+            id=request_id,
+            chat_id=message.chat_id,
+            status_message_id=status_message.message_id,
+            title=title,
+            total=len(buffered_links) + len(unsupported),
+            failed=len(unsupported),
+            detail=detail,
+            source_urls=[link.classified_link.url for link in buffered_links],
+        )
+        runtime.requests[request_id] = request
+        batch = LinkBatch(key=key, request=request, links=buffered_links, unsupported=unsupported)
+        runtime.link_batches[key] = batch
+    else:
+        batch.links.extend(buffered_links)
+        batch.unsupported.extend(unsupported)
+        batch.request.title = link_batch_title(len(batch.links))
+        batch.request.total = len(batch.links) + len(batch.unsupported)
+        batch.request.failed = len(batch.unsupported)
+        batch.request.current = f"{len(batch.links)} link(s) queued"
+        batch.request.detail = "\n".join(batch.unsupported) if batch.unsupported else None
+        batch.request.source_urls.extend(link.classified_link.url for link in buffered_links)
+        if batch.flush_task:
+            batch.flush_task.cancel()
+
+    await update_request(runtime, application, batch.request)
+    batch.flush_task = asyncio.create_task(flush_link_batch_after_delay(runtime, application, key))
+
+
+async def flush_link_batch_after_delay(
+    runtime: BotRuntime, application: Application, key: tuple[int, int]
+) -> None:
+    """Wait for the batch window, then enqueue collected link jobs."""
+    try:
+        await asyncio.sleep(runtime.settings.upload_batch_window_seconds)
+    except asyncio.CancelledError:
+        return
+    batch = runtime.link_batches.pop(key, None)
+    if not batch:
+        return
+    await enqueue_buffered_link_batch(runtime, application, batch)
+
+
+async def enqueue_buffered_link_batch(
+    runtime: BotRuntime, application: Application, batch: LinkBatch
+) -> None:
+    """Turn a buffered cross-message link batch into queue jobs."""
+    if batch.request.cancelled:
+        return
+    batch.request.title = link_batch_title(len(batch.links))
+    batch.request.total = len(batch.links) + len(batch.unsupported)
+    batch.request.failed = len(batch.unsupported)
+    batch.request.current = f"{len(batch.links)} link(s) queued"
+    batch.request.detail = "\n".join(batch.unsupported) if batch.unsupported else None
+    for request_index, buffered in enumerate(batch.links, start=1):
+        classified = buffered.classified_link
+        source = (
+            classified.kind.value
+            if classified.scope == LinkScope.TRACK
+            else f"{classified.kind.value} {classified.scope.value}"
+        )
+        source_label = f"{source} link {request_index}/{len(batch.links)}"
+        job = QueuedJob(
+            kind=JobKind.LINK if classified.scope == LinkScope.TRACK else JobKind.COLLECTION,
+            chat_id=buffered.chat_id,
+            original_message_id=buffered.original_message_id,
+            status_message_id=batch.request.status_message_id,
+            user_id=buffered.user_id,
+            source_label=source_label,
+            classified_link=classified,
+            request_id=batch.request.id,
+            request_status_message_id=batch.request.status_message_id,
+            request_total=len(batch.links),
+            request_index=request_index,
+            display_title=source_label,
+        )
+        await runtime.queue.enqueue(job)
+        batch.request.job_ids.append(job.id)
+    await update_request(runtime, application, batch.request)
+
+
+def link_batch_title(count: int) -> str:
+    """Render a compact title for one or more queued music links."""
+    return "Music link" if count == 1 else f"{count} music link(s)"
 
 
 async def enqueue_link(

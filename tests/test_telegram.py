@@ -17,6 +17,7 @@ from sync_me_maybe.music.urls import classify_url
 from sync_me_maybe.queueing.queue import JobKind, QueuedJob, UploadPayload
 from sync_me_maybe.telegram_bot.callbacks import handle_callback
 from sync_me_maybe.telegram_bot.handlers import (
+    enqueue_buffered_link_batch,
     enqueue_link_batch,
     handle_message,
     job_detail,
@@ -204,6 +205,45 @@ async def test_enqueue_link_batch_records_unsupported_failures(
     assert request.failed == 1
     assert len(request.job_ids) == 2
     assert [job.kind for job in snapshot.pending] == [JobKind.LINK, JobKind.COLLECTION]
+
+
+@pytest.mark.asyncio
+async def test_fast_link_messages_share_one_status_message_and_request(
+    runtime: BotRuntime,
+    fake_application: SimpleNamespace,
+    fake_context: SimpleNamespace,
+    fake_update: SimpleNamespace,
+    fake_message: SimpleNamespace,
+) -> None:
+    runtime = BotRuntime(replace(runtime.settings, upload_batch_window_seconds=30))
+    fake_application.bot_data["runtime"] = runtime
+    fake_context.application = fake_application
+    fake_message.text = "https://youtu.be/one"
+
+    await handle_message(fake_update, fake_context)
+    batch = runtime.link_batches[(1, 42)]
+    first_flush_task = batch.flush_task
+    assert first_flush_task is not None
+
+    fake_message.message_id = 3
+    fake_message.text = "https://open.spotify.com/playlist/abc"
+    await handle_message(fake_update, fake_context)
+    await asyncio.sleep(0)
+
+    assert fake_message.reply_text.await_count == 1
+    assert first_flush_task.cancelled()
+    assert len(runtime.link_batches) == 1
+    assert batch.request.total == 2
+    assert batch.request.current == "2 link(s) queued"
+    assert len(batch.links) == 2
+
+    batch.flush_task.cancel()
+    runtime.link_batches.pop(batch.key)
+    await enqueue_buffered_link_batch(runtime, fake_application, batch)
+    snapshot = await runtime.queue.snapshot()
+    assert [job.kind for job in snapshot.pending] == [JobKind.LINK, JobKind.COLLECTION]
+    assert {job.request_id for job in snapshot.pending} == {batch.request.id}
+    assert batch.request.job_ids == [job.id for job in snapshot.pending]
 
 
 @pytest.mark.asyncio

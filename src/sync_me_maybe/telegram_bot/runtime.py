@@ -15,6 +15,7 @@ from sync_me_maybe.config import Settings
 from sync_me_maybe.music.collections import CollectionResolver
 from sync_me_maybe.music.downloader import YtDlpDownloader
 from sync_me_maybe.music.resolver import LinkResolver
+from sync_me_maybe.music.urls import ClassifiedLink
 from sync_me_maybe.queueing.queue import DownloadQueue, JobKind, QueuedJob, UploadPayload
 from sync_me_maybe.ui.messages import StatusStage
 
@@ -52,12 +53,34 @@ class BufferedUpload:
 
 
 @dataclass
+class BufferedLink:
+    """Link metadata held briefly while nearby link messages are batched."""
+
+    chat_id: int
+    original_message_id: int
+    user_id: int
+    link_index: int
+    classified_link: ClassifiedLink
+
+
+@dataclass
 class UploadBatch:
     """Pending group of uploads from the same chat/user within the batch window."""
 
     key: tuple[int, int]
     request: RequestState
     uploads: list[BufferedUpload]
+    flush_task: asyncio.Task[None] | None = None
+
+
+@dataclass
+class LinkBatch:
+    """Pending group of links from the same chat/user within the batch window."""
+
+    key: tuple[int, int]
+    request: RequestState
+    links: list[BufferedLink]
+    unsupported: list[str] = field(default_factory=list)
     flush_task: asyncio.Task[None] | None = None
 
 
@@ -75,6 +98,7 @@ class BotRuntime:
         self.batch_progress: dict[int, dict[str, int | str]] = {}
         self.requests: dict[str, RequestState] = {}
         self.upload_batches: dict[tuple[int, int], UploadBatch] = {}
+        self.link_batches: dict[tuple[int, int], LinkBatch] = {}
         self.downloader = YtDlpDownloader(
             tmp_dir=settings.download_tmp_dir,
             cookies_file=settings.ytdlp_cookies_file,
