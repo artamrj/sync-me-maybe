@@ -38,14 +38,16 @@ class Settings:
     log_level: str = "INFO"
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
         if not token:
             raise ConfigError("TELEGRAM_BOT_TOKEN is required")
 
         allowed = parse_user_ids(os.environ.get("ALLOWED_TELEGRAM_USER_IDS"))
         if not allowed:
-            raise ConfigError("ALLOWED_TELEGRAM_USER_IDS must contain at least one Telegram user ID")
+            raise ConfigError(
+                "ALLOWED_TELEGRAM_USER_IDS must contain at least one Telegram user ID"
+            )
 
         cookies = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
         max_seconds = os.environ.get("MAX_DOWNLOAD_SECONDS", "900").strip()

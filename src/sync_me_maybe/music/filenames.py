@@ -19,6 +19,8 @@ def sanitize_filename(value: str | None, fallback: str = "Unknown") -> str:
 def clean_title(value: str | None) -> str | None:
     if not value:
         return None
-    value = re.sub(r"\s+[-|]\s+(YouTube Music|Spotify|Apple Music|Shazam)\s*$", "", value, flags=re.IGNORECASE)
+    value = re.sub(
+        r"\s+[-|]\s+(YouTube Music|Spotify|Apple Music|Shazam)\s*$", "", value, flags=re.IGNORECASE
+    )
     value = re.sub(r"\s+on\s+(Spotify|Apple Music|Shazam)\s*$", "", value, flags=re.IGNORECASE)
     return WHITESPACE.sub(" ", value).strip() or None

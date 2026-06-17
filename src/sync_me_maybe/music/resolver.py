@@ -12,7 +12,19 @@ from .filenames import clean_title
 from .urls import ClassifiedLink, LinkKind
 
 LOGGER = logging.getLogger(__name__)
-GENERIC_SLUG_PARTS = {"album", "artist", "music", "song", "track", "us", "de", "gb", "fr", "es", "it"}
+GENERIC_SLUG_PARTS = {
+    "album",
+    "artist",
+    "music",
+    "song",
+    "track",
+    "us",
+    "de",
+    "gb",
+    "fr",
+    "es",
+    "it",
+}
 
 
 @dataclass(frozen=True)
@@ -53,12 +65,16 @@ class LinkResolver:
 
         raise ResolveError(classified.reason or "Unsupported link.")
 
-    def _query_for(self, classified: ClassifiedLink) -> tuple[str | None, str | None, str | None, str | None]:
+    def _query_for(
+        self, classified: ClassifiedLink
+    ) -> tuple[str | None, str | None, str | None, str | None]:
         if classified.kind == LinkKind.SPOTIFY:
             spotify = self._spotify_oembed(classified.url)
             if spotify:
                 return spotify
-            return self._best_effort_metadata_or_slug(classified.url, self._slug_query(classified.url))
+            return self._best_effort_metadata_or_slug(
+                classified.url, self._slug_query(classified.url)
+            )
 
         if classified.kind == LinkKind.APPLE_MUSIC:
             fallback_query = self._apple_music_query(classified.url)
@@ -72,7 +88,9 @@ class LinkResolver:
 
         return None, None, None, None
 
-    def _best_effort_metadata_or_slug(self, url: str, fallback_query: str | None) -> tuple[str | None, str | None, str | None, str | None]:
+    def _best_effort_metadata_or_slug(
+        self, url: str, fallback_query: str | None
+    ) -> tuple[str | None, str | None, str | None, str | None]:
         try:
             title, artist, album = self._page_metadata(url)
         except ResolveError as exc:
@@ -84,7 +102,9 @@ class LinkResolver:
         query = metadata_query or fallback_query
         return query or None, title or fallback_query, artist, album
 
-    def _spotify_oembed(self, url: str) -> tuple[str | None, str | None, str | None, str | None] | None:
+    def _spotify_oembed(
+        self, url: str
+    ) -> tuple[str | None, str | None, str | None, str | None] | None:
         try:
             response = requests.get(
                 "https://open.spotify.com/oembed",
@@ -122,9 +142,13 @@ class LinkResolver:
                     return cleaned
         return self._slug_query(url)
 
-    def _shazam_numeric_track_query(self, url: str) -> tuple[str | None, str | None, str | None, str | None]:
+    def _shazam_numeric_track_query(
+        self, url: str
+    ) -> tuple[str | None, str | None, str | None, str | None]:
         try:
-            response = requests.get(url, timeout=self.timeout_seconds, headers={"User-Agent": "Mozilla/5.0"})
+            response = requests.get(
+                url, timeout=self.timeout_seconds, headers={"User-Agent": "Mozilla/5.0"}
+            )
             response.raise_for_status()
         except requests.RequestException as exc:
             LOGGER.debug("Shazam numeric track lookup failed: %s", exc)
@@ -149,7 +173,9 @@ class LinkResolver:
 
     def _page_metadata(self, url: str) -> tuple[str | None, str | None, str | None]:
         try:
-            response = requests.get(url, timeout=self.timeout_seconds, headers={"User-Agent": "sync-me-maybe/0.1"})
+            response = requests.get(
+                url, timeout=self.timeout_seconds, headers={"User-Agent": "sync-me-maybe/0.1"}
+            )
             response.raise_for_status()
         except requests.RequestException as exc:
             raise ResolveError(f"Could not fetch link metadata: {exc}") from exc
@@ -162,7 +188,9 @@ class LinkResolver:
 
     @staticmethod
     def _meta(soup: BeautifulSoup, property_name: str) -> str | None:
-        tag = soup.find("meta", attrs={"property": property_name}) or soup.find("meta", attrs={"name": property_name})
+        tag = soup.find("meta", attrs={"property": property_name}) or soup.find(
+            "meta", attrs={"name": property_name}
+        )
         if not tag:
             return None
         content = tag.get("content")
@@ -214,7 +242,9 @@ def _shazam_title_artist(html: str) -> tuple[str | None, str | None]:
 
 
 def _soup_meta(soup: BeautifulSoup, property_name: str) -> str | None:
-    tag = soup.find("meta", attrs={"property": property_name}) or soup.find("meta", attrs={"name": property_name})
+    tag = soup.find("meta", attrs={"property": property_name}) or soup.find(
+        "meta", attrs={"name": property_name}
+    )
     if not tag:
         return None
     content = tag.get("content")

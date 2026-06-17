@@ -1,0 +1,1 @@
+"""Music library storage features."""

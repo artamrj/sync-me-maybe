@@ -16,8 +16,36 @@ dependencies = [
   "yt-dlp>=2025.1.15",
 ]
 
+[dependency-groups]
+dev = [
+  "mypy>=1.16.0",
+  "ruff>=0.11.0",
+]
+
 [project.scripts]
-sync-me-maybe = "sync_me_maybe.bot:main"
+sync-me-maybe = "sync_me_maybe.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "BLE"]
+ignore = ["B008"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/sync_me_maybe"]
+ignore_missing_imports = true
+warn_unused_configs = true
+check_untyped_defs = true
+disallow_untyped_defs = false
+no_implicit_optional = true

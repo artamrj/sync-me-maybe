@@ -42,10 +42,8 @@ Find your Telegram user ID by running the bot and sending `/id`.
 Install and run locally:
 
 ```sh
-python -m venv .venv
-. .venv/bin/activate
-pip install -e .
-sync-me-maybe
+uv sync
+uv run sync-me-maybe
 ```
 
 `ffmpeg` must be available on `PATH` for audio conversion.
@@ -77,7 +75,9 @@ If a message contains multiple links, each supported link becomes its own queue 
 ## Development
 
 ```sh
-python -m venv .venv
-. .venv/bin/activate
-pip install -e .
+uv sync --group dev
+uv run sync-me-maybe
+uv run ruff format .
+uv run ruff check .
+uv run mypy src
 ```

@@ -1,0 +1,334 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from pathlib import Path
+from uuid import uuid4
+
+from telegram import Update
+from telegram.constants import ChatAction
+from telegram.ext import Application
+
+from sync_me_maybe.library.storage import store_completed_file, upload_destination
+from sync_me_maybe.music.downloader import DownloadError
+from sync_me_maybe.queueing.queue import JobKind, QueuedJob, UploadPayload
+from sync_me_maybe.telegram_bot.requests import (
+    job_request,
+    mark_request_cancelled,
+    render_request_text,
+    request_cancelled,
+    request_keyboard,
+    update_request,
+)
+from sync_me_maybe.telegram_bot.runtime import BotRuntime, BufferedUpload, RequestState, UploadBatch
+from sync_me_maybe.telegram_bot.safe_api import (
+    safe_chat_action,
+    safe_edit_message,
+    safe_edit_status,
+)
+from sync_me_maybe.ui.messages import (
+    RequestView,
+    StatusStage,
+    render_error,
+    render_request,
+    render_status,
+    render_success,
+    status_keyboard,
+)
+
+LOGGER = logging.getLogger(__name__)
+AUDIO_EXTENSIONS = {
+    ".aac",
+    ".aiff",
+    ".alac",
+    ".flac",
+    ".m4a",
+    ".mp3",
+    ".ogg",
+    ".opus",
+    ".wav",
+    ".wma",
+}
+
+
+async def buffer_upload(update: Update, runtime: BotRuntime, application: Application) -> None:
+    message = update.effective_message
+    if message is None:
+        return
+    telegram_file = message.audio or message.document
+    if telegram_file is None:
+        await message.reply_text(
+            render_error("Could not read uploaded audio."),
+            reply_to_message_id=message.message_id,
+            allow_sending_without_reply=True,
+        )
+        return
+
+    filename = (
+        telegram_file.file_name
+        or getattr(telegram_file, "title", None)
+        or f"telegram-audio-{telegram_file.file_unique_id}"
+    )
+    payload = UploadPayload(
+        file_id=telegram_file.file_id,
+        file_unique_id=telegram_file.file_unique_id,
+        filename=filename,
+    )
+    user_id = message.from_user.id if message.from_user else 0
+    if runtime.settings.upload_batch_window_seconds <= 0:
+        await enqueue_upload_request(
+            runtime,
+            message.chat_id,
+            message.message_id,
+            user_id,
+            [BufferedUpload(message.chat_id, message.message_id, user_id, payload)],
+            application,
+        )
+        return
+
+    key = (message.chat_id, user_id)
+    batch = runtime.upload_batches.get(key)
+    if not batch:
+        request_id = uuid4().hex
+        status_message = await message.reply_text(
+            render_request(
+                RequestView(title="Telegram upload", stage=StatusStage.QUEUED, current=filename)
+            ),
+            reply_to_message_id=message.message_id,
+            allow_sending_without_reply=True,
+        )
+        request = RequestState(
+            id=request_id,
+            chat_id=message.chat_id,
+            status_message_id=status_message.message_id,
+            title="Telegram upload",
+            total=1,
+            current=filename,
+        )
+        runtime.requests[request_id] = request
+        batch = UploadBatch(
+            key=key,
+            request=request,
+            uploads=[BufferedUpload(message.chat_id, message.message_id, user_id, payload)],
+        )
+        runtime.upload_batches[key] = batch
+    else:
+        batch.uploads.append(BufferedUpload(message.chat_id, message.message_id, user_id, payload))
+        batch.request.title = "Telegram uploads"
+        batch.request.total = len(batch.uploads)
+        batch.request.current = f"{len(batch.uploads)} file(s) queued"
+        if batch.flush_task:
+            batch.flush_task.cancel()
+
+    await update_request(runtime, application, batch.request)
+    batch.flush_task = asyncio.create_task(
+        flush_upload_batch_after_delay(runtime, application, key)
+    )
+
+
+async def flush_upload_batch_after_delay(
+    runtime: BotRuntime, application: Application, key: tuple[int, int]
+) -> None:
+    try:
+        await asyncio.sleep(runtime.settings.upload_batch_window_seconds)
+    except asyncio.CancelledError:
+        return
+    batch = runtime.upload_batches.pop(key, None)
+    if not batch:
+        return
+    await enqueue_upload_batch(runtime, application, batch)
+
+
+async def enqueue_upload_batch(
+    runtime: BotRuntime, application: Application, batch: UploadBatch
+) -> None:
+    if batch.request.cancelled:
+        return
+    batch.request.title = "Telegram upload" if len(batch.uploads) == 1 else "Telegram uploads"
+    batch.request.total = len(batch.uploads)
+    batch.request.current = (
+        f"{len(batch.uploads)} file(s) queued"
+        if len(batch.uploads) > 1
+        else batch.uploads[0].payload.filename
+    )
+    for index, buffered in enumerate(batch.uploads, start=1):
+        job = upload_job_from_buffered(buffered, batch.request, index, len(batch.uploads))
+        await runtime.queue.enqueue(job)
+        batch.request.job_ids.append(job.id)
+    await update_request(runtime, application, batch.request)
+
+
+async def enqueue_upload_request(
+    runtime: BotRuntime,
+    chat_id: int,
+    original_message_id: int,
+    user_id: int,
+    uploads: list[BufferedUpload],
+    application: Application,
+) -> None:
+    first = uploads[0]
+    request_id = uuid4().hex
+    status_message = await application.bot.send_message(
+        chat_id=chat_id,
+        text=render_request(
+            RequestView(
+                title="Telegram upload" if len(uploads) == 1 else "Telegram uploads",
+                stage=StatusStage.QUEUED,
+                current=first.payload.filename,
+                total=len(uploads),
+            )
+        ),
+        reply_to_message_id=original_message_id,
+        allow_sending_without_reply=True,
+    )
+    request = RequestState(
+        id=request_id,
+        chat_id=chat_id,
+        status_message_id=status_message.message_id,
+        title="Telegram upload" if len(uploads) == 1 else "Telegram uploads",
+        total=len(uploads),
+        current=first.payload.filename,
+    )
+    runtime.requests[request_id] = request
+    for index, buffered in enumerate(uploads, start=1):
+        job = upload_job_from_buffered(buffered, request, index, len(uploads))
+        await runtime.queue.enqueue(job)
+        request.job_ids.append(job.id)
+    await safe_edit_status(
+        status_message,
+        await render_request_text(runtime, request),
+        reply_markup=request_keyboard(runtime, request),
+    )
+
+
+def upload_job_from_buffered(
+    buffered: BufferedUpload, request: RequestState, index: int, total: int
+) -> QueuedJob:
+    return QueuedJob(
+        kind=JobKind.UPLOAD,
+        chat_id=buffered.chat_id,
+        original_message_id=buffered.original_message_id,
+        status_message_id=request.status_message_id,
+        user_id=buffered.user_id,
+        source_label=buffered.payload.filename,
+        request_id=request.id,
+        request_status_message_id=request.status_message_id,
+        request_total=total,
+        request_index=index,
+        display_title=f"File {index}/{total}" if total > 1 else buffered.payload.filename,
+        upload=buffered.payload,
+    )
+
+
+async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: Application) -> None:
+    bot = application.bot
+    assert job.upload is not None
+    filename = job.upload.filename
+    request = job_request(runtime, job)
+    if request_cancelled(request):
+        return
+    if request:
+        request.stage = StatusStage.DOWNLOADING
+        request.current = filename
+        request.detail = None
+        await update_request(runtime, application, request)
+    destination = upload_destination(runtime.settings.music_dir, filename)
+    if destination.exists():
+        relative_path = destination.relative_to(runtime.settings.music_dir).as_posix()
+        if request:
+            request.stage = StatusStage.SKIPPED
+            request.skipped += 1
+            request.paths.append(relative_path)
+            await update_request(runtime, application, request)
+        else:
+            await safe_edit_message(
+                bot,
+                job.chat_id,
+                job.status_message_id,
+                render_success(relative_path, skipped=True),
+                reply_markup=status_keyboard(
+                    relative_path=relative_path,
+                    path_callback_data=runtime.remember_path(relative_path),
+                ),
+            )
+        return
+
+    runtime.settings.download_tmp_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = (
+        runtime.settings.download_tmp_dir / f"{job.upload.file_unique_id}-{Path(destination).name}"
+    )
+    try:
+        await safe_chat_action(bot, job.chat_id, ChatAction.UPLOAD_DOCUMENT)
+        if not request:
+            await safe_edit_message(
+                bot,
+                job.chat_id,
+                job.status_message_id,
+                render_status(StatusStage.DOWNLOADING, "Telegram upload", filename),
+            )
+        if request_cancelled(request):
+            raise DownloadError("Cancelled by user.")
+        file_ref = await bot.get_file(job.upload.file_id)
+        await file_ref.download_to_drive(custom_path=temp_path)
+        if request_cancelled(request):
+            raise DownloadError("Cancelled by user.")
+        if request:
+            request.stage = StatusStage.SAVING
+            await update_request(runtime, application, request)
+        else:
+            await safe_edit_message(
+                bot,
+                job.chat_id,
+                job.status_message_id,
+                render_status(StatusStage.SAVING, "Telegram upload", filename),
+            )
+        result = store_completed_file(temp_path, destination, runtime.settings.music_dir)
+    except Exception as exc:  # noqa: BLE001 - Telegram file APIs raise several exception types.
+        temp_path.unlink(missing_ok=True)
+        LOGGER.exception("Upload handling failed")
+        if request:
+            if request_cancelled(request):
+                await mark_request_cancelled(runtime, application, request)
+            else:
+                request.stage = StatusStage.FAILED
+                request.failed += 1
+                request.detail = f"Upload failed: {exc}"
+                await update_request(runtime, application, request)
+        else:
+            await safe_edit_message(
+                bot, job.chat_id, job.status_message_id, render_error(f"Upload failed: {exc}")
+            )
+        return
+
+    if request:
+        request.stage = StatusStage.SKIPPED if result.skipped else StatusStage.DONE
+        if result.skipped:
+            request.skipped += 1
+        else:
+            request.completed += 1
+        request.paths.append(result.relative_path)
+        request.current = filename
+        await update_request(runtime, application, request)
+    else:
+        await safe_edit_message(
+            bot,
+            job.chat_id,
+            job.status_message_id,
+            render_success(result.relative_path, skipped=result.skipped),
+            reply_markup=status_keyboard(
+                relative_path=result.relative_path,
+                path_callback_data=runtime.remember_path(result.relative_path),
+            ),
+        )
+
+
+def audio_document_filename(update: Update) -> str | None:
+    document = update.effective_message.document if update.effective_message else None
+    if not document:
+        return None
+    filename = document.file_name or ""
+    mime_type = document.mime_type or ""
+    suffix = Path(filename).suffix.lower()
+    if mime_type.startswith("audio/") or suffix in AUDIO_EXTENSIONS:
+        return filename
+    return None

@@ -4,15 +4,17 @@ import asyncio
 import re
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import yt_dlp
 
+from sync_me_maybe.library.storage import TrackInfo
+
 from .filenames import sanitize_filename
 from .resolver import ResolvedTrack
-from .storage import TrackInfo
 
 
 class DownloadError(RuntimeError):
@@ -26,15 +28,21 @@ class DownloadedTrack:
 
 
 class YtDlpDownloader:
-    def __init__(self, tmp_dir: Path, cookies_file: Path | None = None, max_seconds: int = 900) -> None:
+    def __init__(
+        self, tmp_dir: Path, cookies_file: Path | None = None, max_seconds: int = 900
+    ) -> None:
         self.tmp_dir = tmp_dir
         self.cookies_file = cookies_file
         self.max_seconds = max_seconds
 
-    async def download(self, resolved: ResolvedTrack, cancel_check: Callable[[], bool] | None = None) -> DownloadedTrack:
+    async def download(
+        self, resolved: ResolvedTrack, cancel_check: Callable[[], bool] | None = None
+    ) -> DownloadedTrack:
         return await asyncio.to_thread(self._download_sync, resolved, cancel_check)
 
-    def _download_sync(self, resolved: ResolvedTrack, cancel_check: Callable[[], bool] | None = None) -> DownloadedTrack:
+    def _download_sync(
+        self, resolved: ResolvedTrack, cancel_check: Callable[[], bool] | None = None
+    ) -> DownloadedTrack:
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         run_id = uuid.uuid4().hex
         output_template = str(self.tmp_dir / f"{run_id}.%(ext)s")
@@ -132,6 +140,10 @@ def _int(value: Any) -> int | None:
 
 
 def _strip_youtube_noise(value: str) -> str:
-    value = re.sub(r"\s*\[[^\]]*(official|lyrics?|audio|video)[^\]]*\]\s*", " ", value, flags=re.IGNORECASE)
-    value = re.sub(r"\s*\([^\)]*(official|lyrics?|audio|video)[^\)]*\)\s*", " ", value, flags=re.IGNORECASE)
+    value = re.sub(
+        r"\s*\[[^\]]*(official|lyrics?|audio|video)[^\]]*\]\s*", " ", value, flags=re.IGNORECASE
+    )
+    value = re.sub(
+        r"\s*\([^\)]*(official|lyrics?|audio|video)[^\)]*\)\s*", " ", value, flags=re.IGNORECASE
+    )
     return sanitize_filename(value, "Unknown Title")

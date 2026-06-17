@@ -4,7 +4,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from .filenames import sanitize_filename
+from sync_me_maybe.music.filenames import sanitize_filename
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,9 @@ def upload_destination(music_dir: Path, filename: str | None) -> Path:
     return music_dir / safe_name
 
 
-def store_completed_file(source: Path, destination: Path, music_dir: Path, skip_existing: bool = True) -> StoreResult:
+def store_completed_file(
+    source: Path, destination: Path, music_dir: Path, skip_existing: bool = True
+) -> StoreResult:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if skip_existing and destination.exists():
         source.unlink(missing_ok=True)

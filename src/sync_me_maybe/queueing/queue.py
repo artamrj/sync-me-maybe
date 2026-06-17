@@ -7,10 +7,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
 from uuid import uuid4
 
-from .urls import ClassifiedLink
+from sync_me_maybe.music.urls import ClassifiedLink
 
 LOGGER = logging.getLogger(__name__)
 

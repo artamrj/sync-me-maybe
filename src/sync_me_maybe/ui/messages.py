@@ -50,11 +50,14 @@ def render_help() -> str:
         "2. I resolve, download, and save it to your music folder.\n"
         "3. Duplicates are skipped automatically.\n\n"
         "Supported links: YouTube Music, Spotify, Apple Music, and Shazam tracks.\n"
-        "Playlists/albums are supported for YouTube, Spotify, and Apple Music when public track data is available."
+        "Playlists/albums are supported for YouTube, Spotify, and Apple Music "
+        "when public track data is available."
     )
 
 
-def render_status(stage: StatusStage, source: str, detail: str | None = None, position: int | None = None) -> str:
+def render_status(
+    stage: StatusStage, source: str, detail: str | None = None, position: int | None = None
+) -> str:
     lines = [
         f"{stage.value}",
         "",
@@ -76,7 +79,14 @@ def render_error(message: str) -> str:
     return f"{StatusStage.FAILED.value}\n\n{message}"
 
 
-def render_collection_progress(source: str, total: int | None = None, queued: int = 0, completed: int = 0, skipped: int = 0, failed: int = 0) -> str:
+def render_collection_progress(
+    source: str,
+    total: int | None = None,
+    queued: int = 0,
+    completed: int = 0,
+    skipped: int = 0,
+    failed: int = 0,
+) -> str:
     lines = [StatusStage.EXPANDING.value, "", f"🎼 Source: {source}"]
     if total is None:
         lines.append("Status: detecting tracks")
@@ -161,9 +171,13 @@ def status_keyboard(
     if refresh_callback_data:
         action_row.append(InlineKeyboardButton("🔄 Refresh", callback_data=refresh_callback_data))
     if relative_path:
-        action_row.append(InlineKeyboardButton("📍 Show path", callback_data=path_callback_data or "path"))
+        action_row.append(
+            InlineKeyboardButton("📍 Show path", callback_data=path_callback_data or "path")
+        )
     if results_callback_data:
-        action_row.append(InlineKeyboardButton("📂 Show results", callback_data=results_callback_data))
+        action_row.append(
+            InlineKeyboardButton("📂 Show results", callback_data=results_callback_data)
+        )
     if action_row:
         rows.append(action_row)
     if include_health:

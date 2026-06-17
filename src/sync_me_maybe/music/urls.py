@@ -81,4 +81,10 @@ def classify_url(url: str) -> ClassifiedLink:
     if host.endswith("shazam.com"):
         return ClassifiedLink(LinkKind.SHAZAM, url)
 
-    return ClassifiedLink(LinkKind.UNSUPPORTED, url, reason="Unsupported link. Send a YouTube Music, Spotify, Apple Music, or Shazam track link.")
+    return ClassifiedLink(
+        LinkKind.UNSUPPORTED,
+        url,
+        reason=(
+            "Unsupported link. Send a YouTube Music, Spotify, Apple Music, or Shazam track link."
+        ),
+    )
