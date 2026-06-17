@@ -260,9 +260,9 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
         # the same file/name has already been synced.
         relative_path = destination.relative_to(runtime.settings.music_dir).as_posix()
         if request:
-            request.stage = StatusStage.SKIPPED
             request.skipped += 1
             request.paths.append(relative_path)
+            set_upload_request_stage(request)
             await update_request(runtime, application, request)
         else:
             await safe_edit_message(
@@ -329,13 +329,13 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
         return
 
     if request:
-        request.stage = StatusStage.SKIPPED if result.skipped else StatusStage.DONE
         if result.skipped:
             request.skipped += 1
         else:
             request.completed += 1
         request.paths.append(result.relative_path)
         request.current = filename
+        set_upload_request_stage(request)
         await update_request(runtime, application, request)
     else:
         await safe_edit_message(
@@ -348,6 +348,21 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
                 path_callback_data=runtime.remember_path(result.relative_path),
             ),
         )
+
+
+def set_upload_request_stage(request: RequestState) -> None:
+    """Set the visible upload stage from aggregate counters."""
+    done = request.completed + request.skipped + request.failed
+    if done < request.total:
+        request.stage = StatusStage.QUEUED
+        return
+    if request.failed and not request.completed and not request.skipped:
+        request.stage = StatusStage.FAILED
+        return
+    if request.completed:
+        request.stage = StatusStage.DONE
+        return
+    request.stage = StatusStage.SKIPPED
 
 
 def audio_document_filename(update: Update) -> str | None:

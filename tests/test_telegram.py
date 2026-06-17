@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -350,6 +352,93 @@ async def test_upload_buffer_batch_enqueue_and_document_detection(
     runtime.requests[request.id] = request
     await enqueue_upload_batch(runtime, fake_application, batch)
     assert len(request.job_ids) == 2
+
+
+@pytest.mark.asyncio
+async def test_fast_uploads_share_one_status_message_and_request(
+    runtime: BotRuntime,
+    fake_application: SimpleNamespace,
+    fake_update: SimpleNamespace,
+    fake_message: SimpleNamespace,
+) -> None:
+    runtime = BotRuntime(replace(runtime.settings, upload_batch_window_seconds=30))
+    fake_application.bot_data["runtime"] = runtime
+    first_status = SimpleNamespace(message_id=11, edit_text=AsyncMock())
+    fake_message.reply_text.return_value = first_status
+    fake_message.document = SimpleNamespace(
+        file_id="file-a",
+        file_unique_id="unique-a",
+        file_name="a.mp3",
+        mime_type="audio/mpeg",
+    )
+
+    await buffer_upload(fake_update, runtime, fake_application)
+    batch = runtime.upload_batches[(1, 42)]
+    first_flush_task = batch.flush_task
+    assert first_flush_task is not None
+
+    fake_message.message_id = 3
+    fake_message.document = SimpleNamespace(
+        file_id="file-b",
+        file_unique_id="unique-b",
+        file_name="b.mp3",
+        mime_type="audio/mpeg",
+    )
+    await buffer_upload(fake_update, runtime, fake_application)
+    await asyncio.sleep(0)
+
+    assert fake_message.reply_text.await_count == 1
+    assert first_flush_task.cancelled()
+    assert len(runtime.upload_batches) == 1
+    assert batch.request.total == 2
+    assert batch.request.current == "2 file(s) queued"
+    assert len(batch.uploads) == 2
+
+    batch.flush_task.cancel()
+    runtime.upload_batches.pop(batch.key)
+    await enqueue_upload_batch(runtime, fake_application, batch)
+    snapshot = await runtime.queue.snapshot()
+    assert len(snapshot.pending) == 2
+    assert {job.request_id for job in snapshot.pending} == {batch.request.id}
+    assert batch.request.job_ids == [job.id for job in snapshot.pending]
+
+
+@pytest.mark.asyncio
+async def test_later_upload_resets_batch_flush_timer(
+    runtime: BotRuntime,
+    fake_application: SimpleNamespace,
+    fake_update: SimpleNamespace,
+    fake_message: SimpleNamespace,
+) -> None:
+    runtime = BotRuntime(replace(runtime.settings, upload_batch_window_seconds=30))
+    fake_application.bot_data["runtime"] = runtime
+    fake_message.document = SimpleNamespace(
+        file_id="file-a",
+        file_unique_id="unique-a",
+        file_name="a.mp3",
+        mime_type="audio/mpeg",
+    )
+
+    await buffer_upload(fake_update, runtime, fake_application)
+    batch = runtime.upload_batches[(1, 42)]
+    first_flush_task = batch.flush_task
+    assert first_flush_task is not None
+
+    fake_message.message_id = 3
+    fake_message.document = SimpleNamespace(
+        file_id="file-b",
+        file_unique_id="unique-b",
+        file_name="b.mp3",
+        mime_type="audio/mpeg",
+    )
+    await buffer_upload(fake_update, runtime, fake_application)
+    await asyncio.sleep(0)
+
+    assert first_flush_task.cancelled()
+    assert batch.flush_task is not None
+    assert batch.flush_task is not first_flush_task
+    assert not batch.flush_task.done()
+    batch.flush_task.cancel()
 
 
 @pytest.mark.asyncio
