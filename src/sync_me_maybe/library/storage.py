@@ -30,23 +30,12 @@ class StoreResult:
 
 def track_destination(music_dir: Path, info: TrackInfo, extension: str = ".mp3") -> Path:
     """Build the final music-library path for a resolved/downloaded track."""
-    artist = sanitize_filename(info.artist, "Unknown Artist")
+    artist = sanitize_filename(info.artist, "")
     title = sanitize_filename(info.title, "Unknown Title")
+    suffix = extension if extension.startswith(".") else f".{extension}"
+    stem = f"{artist} - {title}" if artist else title
 
-    prefix = f"{info.track_number:02d} - " if info.track_number else ""
-    filename = f"{prefix}{title}{extension if extension.startswith('.') else f'.{extension}'}"
-    # Album-aware paths help Navidrome and similar scanners group tracks into
-    # albums. Unknown albums are avoided so they do not create noisy folders.
-    if _has_known_album(info.album):
-        return music_dir / artist / sanitize_filename(info.album, "Unknown Album") / filename
-    return music_dir / artist / filename
-
-
-def _has_known_album(album: str | None) -> bool:
-    if not album:
-        return False
-    normalized = album.strip().casefold()
-    return bool(normalized) and normalized != "unknown album"
+    return music_dir / f"{stem}{suffix}"
 
 
 def upload_destination(music_dir: Path, filename: str | None) -> Path:

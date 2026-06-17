@@ -78,20 +78,20 @@ def test_filename_helpers_clean_provider_noise_and_invalid_characters() -> None:
 
 def test_track_and_upload_destinations_use_safe_library_layout(tmp_path: Path) -> None:
     info = TrackInfo(title="Song", artist="Artist", album="Album", track_number=3)
-    assert track_destination(tmp_path, info) == tmp_path / "Artist" / "Album" / "03 - Song.mp3"
-    unknown_album = TrackInfo(title="Song", artist="Artist", album="Unknown Album")
-    assert track_destination(tmp_path, unknown_album) == tmp_path / "Artist" / "Song.mp3"
+    assert track_destination(tmp_path, info) == tmp_path / "Artist - Song.mp3"
+    missing_artist = TrackInfo(title="Song", artist=None, album="Album", track_number=3)
+    assert track_destination(tmp_path, missing_artist) == tmp_path / "Song.mp3"
     assert upload_destination(tmp_path, "folder/bad?.flac") == tmp_path / "folder_bad_.flac"
 
 
 def test_store_completed_file_moves_or_skips_duplicate(tmp_path: Path) -> None:
     music_dir = tmp_path / "music"
     source = tmp_path / "source.mp3"
-    destination = music_dir / "Artist" / "Song.mp3"
+    destination = music_dir / "Artist - Song.mp3"
     source.write_text("new", encoding="utf-8")
 
     result = store_completed_file(source, destination, music_dir)
-    assert result == StoreResult(destination, "Artist/Song.mp3", False)
+    assert result == StoreResult(destination, "Artist - Song.mp3", False)
     assert destination.read_text(encoding="utf-8") == "new"
     assert not source.exists()
 
@@ -99,7 +99,7 @@ def test_store_completed_file_moves_or_skips_duplicate(tmp_path: Path) -> None:
     duplicate.write_text("duplicate", encoding="utf-8")
     skipped = store_completed_file(duplicate, destination, music_dir)
     assert skipped.skipped
-    assert skipped.relative_path == "Artist/Song.mp3"
+    assert skipped.relative_path == "Artist - Song.mp3"
     assert not duplicate.exists()
     assert destination.read_text(encoding="utf-8") == "new"
 

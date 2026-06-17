@@ -17,8 +17,8 @@ Spotify, Apple Music, and Shazam links are used as search inputs. The bot does n
 
 - Link downloads are converted to MP3 at up to 320 kbps via `yt-dlp` and `ffmpeg`.
 - Telegram uploads are stored in their original format with their original filename when available.
-- Link downloads are stored as `Artist/Album/Track - Title.mp3` when album metadata exists.
-- If album metadata is missing or unknown, tracks are stored directly under `Artist/Track - Title.mp3`.
+- Link downloads are stored directly under `MUSIC_DIR` as `Artist - Title.mp3` when artist metadata exists.
+- If artist metadata is missing, link downloads are stored as `Title.mp3`.
 - Existing target files are skipped instead of overwritten.
 - Playlist and album links are expanded into individual track jobs, capped by `MAX_COLLECTION_TRACKS`.
 

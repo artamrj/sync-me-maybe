@@ -237,7 +237,7 @@ async def test_process_link_job_success_failure_and_retry(
     await process_link_job(job, runtime, fake_application)
     assert request.stage == StatusStage.DONE
     assert request.completed == 1
-    assert request.paths == ["Artist/Song.mp3"]
+    assert request.paths == ["Artist - Song.mp3"]
 
     failing = QueuedJob(JobKind.LINK, 1, 2, 10, 42, "youtube", classified_link=classified)
     runtime.resolver.resolve = AsyncMock(side_effect=DownloadError("permanent", retryable=False))
