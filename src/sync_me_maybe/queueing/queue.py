@@ -138,6 +138,7 @@ class DownloadQueue:
 
     def retry_later(self, job: QueuedJob, delay_seconds: int) -> None:
         """Schedule a failed job to return to the queue after its backoff."""
+
         async def reenqueue() -> None:
             try:
                 await asyncio.sleep(delay_seconds)

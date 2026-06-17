@@ -178,7 +178,9 @@ async def test_handle_message_routes_auth_upload_empty_single_and_batch(
     assert len(snapshot.pending) == 1
     assert snapshot.pending[0].kind == JobKind.LINK
 
-    fake_message.text = "https://youtu.be/one https://example.com/nope https://open.spotify.com/playlist/abc"
+    fake_message.text = (
+        "https://youtu.be/one https://example.com/nope https://open.spotify.com/playlist/abc"
+    )
     await handle_message(fake_update, fake_context)
     snapshot = await runtime.queue.snapshot()
     assert [job.kind for job in snapshot.pending][-2:] == [JobKind.LINK, JobKind.COLLECTION]

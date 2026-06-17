@@ -136,7 +136,9 @@ async def test_apple_and_shazam_slug_resolution_and_numeric_fetch() -> None:
     response.url = "https://www.shazam.com/track/123"
     response.raise_for_status.return_value = None
     with patch("sync_me_maybe.music.providers.shazam.requests.get", return_value=response):
-        numeric = await ShazamProvider().resolve_track(classify_url("https://www.shazam.com/track/123"))
+        numeric = await ShazamProvider().resolve_track(
+            classify_url("https://www.shazam.com/track/123")
+        )
     assert numeric.search_query == "Artist Song"
 
 
@@ -145,12 +147,18 @@ async def test_collection_providers_expand_or_raise() -> None:
     spotify = SpotifyProvider()
     apple = AppleMusicProvider()
     with patch.object(spotify.public_scraper, "collection", return_value=[TrackSearchItem("Song")]):
-        assert await spotify.expand_collection(classify_url("https://open.spotify.com/playlist/abc"))
+        assert await spotify.expand_collection(
+            classify_url("https://open.spotify.com/playlist/abc")
+        )
     with patch.object(apple.public_scraper, "collection", return_value=[]):
         with pytest.raises(ProviderError, match="Could not expand"):
-            await apple.expand_collection(classify_url("https://music.apple.com/us/playlist/name/pl.1"))
+            await apple.expand_collection(
+                classify_url("https://music.apple.com/us/playlist/name/pl.1")
+            )
     with pytest.raises(ProviderError, match="does not support"):
-        await ShazamProvider().expand_collection(classify_url("https://www.shazam.com/track/1/name"))
+        await ShazamProvider().expand_collection(
+            classify_url("https://www.shazam.com/track/1/name")
+        )
 
 
 @pytest.mark.asyncio
@@ -168,7 +176,9 @@ async def test_youtube_playlist_entry_conversion() -> None:
     ydl_context.__exit__ = Mock(return_value=None)
 
     with patch("sync_me_maybe.music.providers.youtube.yt_dlp.YoutubeDL", return_value=ydl_context):
-        tracks = await provider.expand_collection(classify_url("https://youtube.com/playlist?list=abc"))
+        tracks = await provider.expand_collection(
+            classify_url("https://youtube.com/playlist?list=abc")
+        )
 
     assert tracks == [TrackSearchItem("First Song", "Artist", None, 1, "https://youtu.be/1")]
 

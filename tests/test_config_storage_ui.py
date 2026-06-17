@@ -70,7 +70,7 @@ def test_is_allowed_requires_user_id_in_allowlist() -> None:
 
 
 def test_filename_helpers_clean_provider_noise_and_invalid_characters() -> None:
-    assert sanitize_filename(' bad/name:*? .mp3 ', "fallback") == "bad_name___ .mp3"
+    assert sanitize_filename(" bad/name:*? .mp3 ", "fallback") == "bad_name___ .mp3"
     assert sanitize_filename("", "fallback") == "fallback"
     assert clean_title("Song - YouTube Music") == "Song"
     assert clean_title("Song on Spotify") == "Song"

@@ -48,6 +48,43 @@ uv run sync-me-maybe
 
 `ffmpeg` must be available on `PATH` for audio conversion.
 
+## Docker Deployment
+
+Published images are available from GitHub Container Registry:
+
+```sh
+ghcr.io/artamrj/sync-me-maybe:latest
+```
+
+For a NAS, VPS, or home server deployment, copy `.env.example` to `.env` and set the Telegram token, allowed user IDs, host paths, and host UID/GID. On Linux hosts, get the UID and GID for the account that should own downloaded music:
+
+```sh
+id -u
+id -g
+```
+
+Then start the service:
+
+```sh
+docker compose pull
+docker compose up -d
+docker compose logs -f
+```
+
+The compose file runs the container as `${PUID}:${PGID}` and mounts:
+
+- `${MUSIC_DIR_HOST}` to `/music`
+- `${DOWNLOAD_TMP_DIR_HOST}` to `/tmp/sync-me-maybe`
+- `${YTDLP_COOKIES_FILE_HOST}` to `/config/cookies.txt` for optional yt-dlp cookies
+
+Use writable host folders owned by the configured UID/GID. The app sets `MUSIC_DIR=/music` and `DOWNLOAD_TMP_DIR=/tmp/sync-me-maybe` inside the container, so the container remains stateless except for mounted music, temporary downloads, and optional cookies. To use cookies, set `YTDLP_COOKIES_FILE=/config/cookies.txt` and point `YTDLP_COOKIES_FILE_HOST` at the host cookies file.
+
+Tags:
+
+- `latest`: latest successful build from `main`.
+- `sha-<commit>`: immutable commit image for rollback or pinned deployments.
+- `vX.Y.Z`, `X.Y.Z`, and `X.Y`: release tags when pushing version tags.
+
 ## Environment Variables
 
 - `TELEGRAM_BOT_TOKEN`: required Telegram bot token.

@@ -54,8 +54,7 @@ def test_permanent_nested_and_cancelled_errors() -> None:
     cancelled.__cause__ = DownloadError("Cancelled by user.", retryable=False)
 
     assert (
-        retry_decision(current, ResolveError("Unsupported", retryable=False))
-        == RetryDecision.FAIL
+        retry_decision(current, ResolveError("Unsupported", retryable=False)) == RetryDecision.FAIL
     )
     assert retry_decision(current, wrapped) == RetryDecision.RETRY
     assert retry_decision(current, cancelled) == RetryDecision.CANCEL

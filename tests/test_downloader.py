@@ -81,6 +81,7 @@ def test_downloader_uses_provider_metadata_and_strips_youtube_noise(tmp_path: Pa
         "sync_me_maybe.music.downloader.yt_dlp.YoutubeDL",
         return_value=context,
     ) as youtube_dl:
+
         def fake_extract(_: str, download: bool) -> dict[str, object]:
             assert download
             run_id = Path(youtube_dl.call_args.args[0]["outtmpl"]).name.split(".")[0]
