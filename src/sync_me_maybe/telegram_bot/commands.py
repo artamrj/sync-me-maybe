@@ -1,3 +1,5 @@
+"""Telegram slash command handlers."""
+
 from __future__ import annotations
 
 from telegram import Update
@@ -9,6 +11,7 @@ from sync_me_maybe.ui.messages import render_help, render_welcome, status_keyboa
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the welcome message and whether this Telegram user is authorized."""
     runtime: BotRuntime = context.application.bot_data["runtime"]
     message = update.effective_message
     if message is None:
@@ -20,6 +23,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show supported inputs and the basic workflow."""
     message = update.effective_message
     if message is None:
         return
@@ -27,6 +31,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def user_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reply with the Telegram user ID used for allowlist configuration."""
     message = update.effective_message
     if message is None:
         return
@@ -35,6 +40,7 @@ async def user_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Verify that the configured music directory is writable."""
     runtime: BotRuntime = context.application.bot_data["runtime"]
     message = update.effective_message
     if message is None:
@@ -44,6 +50,8 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     try:
+        # The probe creates and deletes a small file, which checks real write
+        # permission rather than only whether the directory path exists.
         runtime.settings.music_dir.mkdir(parents=True, exist_ok=True)
         probe = runtime.settings.music_dir / ".sync-me-maybe-health"
         probe.write_text("ok", encoding="utf-8")
@@ -56,6 +64,7 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the active queue item and a short pending list."""
     runtime: BotRuntime = context.application.bot_data["runtime"]
     message = update.effective_message
     if message is None:

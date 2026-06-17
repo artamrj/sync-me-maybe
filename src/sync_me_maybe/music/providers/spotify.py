@@ -1,3 +1,9 @@
+"""Spotify provider adapter.
+
+Spotify is used only for public metadata. Actual audio is found by turning that
+metadata into a YouTube Music search query.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +19,8 @@ from sync_me_maybe.music.urls import ClassifiedLink, LinkKind, LinkScope
 
 
 class SpotifyProvider:
+    """Resolve Spotify links and expand public Spotify collections."""
+
     kind = LinkKind.SPOTIFY
 
     def __init__(self, timeout_seconds: int = 20) -> None:
@@ -20,6 +28,7 @@ class SpotifyProvider:
         self.public_scraper = PublicCollectionScraper(timeout_seconds)
 
     def classify(self, url: str) -> ClassifiedLink | None:
+        """Recognize Spotify track, playlist, and album URLs."""
         from urllib.parse import urlparse
 
         parsed = urlparse(url)
@@ -36,12 +45,15 @@ class SpotifyProvider:
         return ClassifiedLink(LinkKind.SPOTIFY, url)
 
     async def resolve_track(self, link: ClassifiedLink) -> ResolvedTrack:
+        """Resolve a Spotify track link without blocking the event loop."""
         return await asyncio.to_thread(self._resolve_track_sync, link)
 
     async def expand_collection(self, link: ClassifiedLink) -> list[TrackSearchItem]:
+        """Expand playlists/albums using public page data."""
         return await asyncio.to_thread(self._collection_sync, link)
 
     def _resolve_track_sync(self, link: ClassifiedLink) -> ResolvedTrack:
+        """Build the YouTube Music search query for one Spotify item."""
         spotify = self._spotify_oembed(link.url)
         if spotify:
             query, title, artist, album = spotify
@@ -63,6 +75,7 @@ class SpotifyProvider:
         )
 
     def _collection_sync(self, link: ClassifiedLink) -> list[TrackSearchItem]:
+        """Return track items from a public playlist or album page."""
         tracks = self.public_scraper.collection(link.url)
         if not tracks:
             raise ProviderError(
@@ -75,6 +88,7 @@ class SpotifyProvider:
     def _best_effort_metadata_or_slug(
         self, url: str, fallback_query: str | None
     ) -> tuple[str | None, str | None, str | None, str | None]:
+        """Use page metadata when available, otherwise fall back to URL text."""
         try:
             title, artist, album = self._page_metadata(url)
         except ProviderError:
@@ -88,6 +102,7 @@ class SpotifyProvider:
     def _spotify_oembed(
         self, url: str
     ) -> tuple[str | None, str | None, str | None, str | None] | None:
+        """Ask Spotify's public oEmbed endpoint for a simple title."""
         try:
             response = requests.get(
                 "https://open.spotify.com/oembed",
@@ -105,6 +120,7 @@ class SpotifyProvider:
         return title, title, None, None
 
     def _page_metadata(self, url: str) -> tuple[str | None, str | None, str | None]:
+        """Scrape Open Graph metadata from the public Spotify page."""
         try:
             response = requests.get(
                 url, timeout=self.timeout_seconds, headers={"User-Agent": "sync-me-maybe/0.1"}
@@ -121,6 +137,7 @@ class SpotifyProvider:
 
 
 def _meta(soup: BeautifulSoup, property_name: str) -> str | None:
+    """Read one meta tag value from a BeautifulSoup document."""
     tag = soup.find("meta", attrs={"property": property_name}) or soup.find(
         "meta", attrs={"name": property_name}
     )

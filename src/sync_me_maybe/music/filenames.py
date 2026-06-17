@@ -1,3 +1,5 @@
+"""Filename cleanup helpers shared by downloads and Telegram uploads."""
+
 from __future__ import annotations
 
 import re
@@ -8,6 +10,7 @@ WHITESPACE = re.compile(r"\s+")
 
 
 def sanitize_filename(value: str | None, fallback: str = "Unknown") -> str:
+    """Return a filesystem-safe name while preserving readable Unicode text."""
     if not value:
         value = fallback
     value = unicodedata.normalize("NFKC", value)
@@ -17,6 +20,7 @@ def sanitize_filename(value: str | None, fallback: str = "Unknown") -> str:
 
 
 def clean_title(value: str | None) -> str | None:
+    """Remove provider suffixes from page titles before using them as metadata."""
     if not value:
         return None
     value = re.sub(

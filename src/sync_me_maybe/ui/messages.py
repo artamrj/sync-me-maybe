@@ -1,3 +1,5 @@
+"""User-facing Telegram message and keyboard rendering."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -7,6 +9,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 
 class StatusStage(StrEnum):
+    """Status labels shown in Telegram messages."""
+
     QUEUED = "⏳ Queued"
     THINKING = "🧠 Preparing"
     DOWNLOADING = "⬇️ Downloading"
@@ -20,6 +24,8 @@ class StatusStage(StrEnum):
 
 @dataclass
 class RequestView:
+    """Presentation model used to render aggregate request status."""
+
     title: str
     stage: StatusStage
     total: int = 1
@@ -33,6 +39,7 @@ class RequestView:
 
 
 def render_welcome(authorized: bool) -> str:
+    """Render the /start message."""
     status = "✅ Authorized" if authorized else "🔒 Not authorized"
     return (
         "🎧 sync-me-maybe\n\n"
@@ -44,6 +51,7 @@ def render_welcome(authorized: bool) -> str:
 
 
 def render_help() -> str:
+    """Render the /help message."""
     return (
         "🎧 How to use sync-me-maybe\n\n"
         "1. Send one music link or one audio file.\n"
@@ -58,6 +66,7 @@ def render_help() -> str:
 def render_status(
     stage: StatusStage, source: str, detail: str | None = None, position: int | None = None
 ) -> str:
+    """Render a simple one-job status message."""
     lines = [
         f"{stage.value}",
         "",
@@ -71,11 +80,13 @@ def render_status(
 
 
 def render_success(relative_path: str, skipped: bool = False) -> str:
+    """Render completion text for stored or duplicate files."""
     heading = StatusStage.SKIPPED.value if skipped else StatusStage.DONE.value
     return f"{heading}\n\n📍 Path: {relative_path}"
 
 
 def render_error(message: str) -> str:
+    """Render a failed status message."""
     return f"{StatusStage.FAILED.value}\n\n{message}"
 
 
@@ -87,6 +98,7 @@ def render_collection_progress(
     skipped: int = 0,
     failed: int = 0,
 ) -> str:
+    """Render progress for collection expansion and child track processing."""
     lines = [StatusStage.EXPANDING.value, "", f"🎼 Source: {source}"]
     if total is None:
         lines.append("Status: detecting tracks")
@@ -104,6 +116,7 @@ def render_collection_progress(
 
 
 def progress_bar(done: int, total: int, width: int = 10) -> str:
+    """Render a fixed-width text progress bar."""
     if total <= 0:
         return "░" * width + " 0%"
     ratio = max(0.0, min(1.0, done / total))
@@ -113,11 +126,13 @@ def progress_bar(done: int, total: int, width: int = 10) -> str:
 
 
 def render_counters(total: int, completed: int, skipped: int, failed: int) -> str:
+    """Render stored/skipped/failed/waiting counters."""
     waiting = max(total - completed - skipped - failed, 0)
     return f"✅ {completed} stored  ⏭️ {skipped} skipped  ❌ {failed} failed  ⏳ {waiting} queued"
 
 
 def render_request(view: RequestView) -> str:
+    """Render the aggregate request status used for batches and collections."""
     done = view.completed + view.skipped + view.failed
     active_detail = view.current or view.detail
     lines = [
@@ -138,6 +153,8 @@ def render_request(view: RequestView) -> str:
     if view.detail and view.detail != view.current:
         lines.append(view.detail)
     if view.paths and done >= view.total:
+        # Keep the Telegram message short. Full multi-result lists are available
+        # through the "Show results" callback button.
         lines.extend(["", f"📂 Results: {len(view.paths)} stored/skipped path(s)"])
         for path in view.paths[:3]:
             lines.append(f"• {path}")
@@ -147,6 +164,7 @@ def render_request(view: RequestView) -> str:
 
 
 def _status_line(view: RequestView, active_detail: str | None) -> str:
+    """Include the active item in the headline for multi-item requests."""
     if view.total > 1 and active_detail:
         return f"{view.stage.value} · {active_detail}"
     return view.stage.value
@@ -162,6 +180,7 @@ def status_keyboard(
     results_callback_data: str | None = None,
     include_health: bool = False,
 ) -> InlineKeyboardMarkup | None:
+    """Build optional inline buttons for source links and status actions."""
     rows: list[list[InlineKeyboardButton]] = []
     if source_url:
         rows.append([InlineKeyboardButton("🔗 Open source", url=source_url)])

@@ -1,3 +1,5 @@
+"""Telegram audio upload buffering, queueing, and storage."""
+
 from __future__ import annotations
 
 import asyncio
@@ -59,6 +61,7 @@ AUDIO_EXTENSIONS = {
 
 
 async def buffer_upload(update: Update, runtime: BotRuntime, application: Application) -> None:
+    """Collect an uploaded audio file and enqueue it immediately or after batching."""
     message = update.effective_message
     if message is None:
         return
@@ -71,6 +74,8 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
         )
         return
 
+    # Telegram audio uploads have different metadata depending on client and file
+    # type, so choose the best available human-readable filename.
     filename = (
         telegram_file.file_name
         or getattr(telegram_file, "title", None)
@@ -83,6 +88,7 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
     )
     user_id = message.from_user.id if message.from_user else 0
     if runtime.settings.upload_batch_window_seconds <= 0:
+        # A zero window disables grouping and makes each file a separate request.
         await enqueue_upload_request(
             runtime,
             message.chat_id,
@@ -93,6 +99,8 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
         )
         return
 
+    # Group only uploads from the same chat and user. This avoids mixing files
+    # from different people in a shared chat.
     key = (message.chat_id, user_id)
     batch = runtime.upload_batches.get(key)
     if not batch:
@@ -120,6 +128,8 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
         )
         runtime.upload_batches[key] = batch
     else:
+        # A new file arrived before the window closed, so extend the batch and
+        # restart the timer.
         batch.uploads.append(BufferedUpload(message.chat_id, message.message_id, user_id, payload))
         batch.request.title = "Telegram uploads"
         batch.request.total = len(batch.uploads)
@@ -136,6 +146,7 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
 async def flush_upload_batch_after_delay(
     runtime: BotRuntime, application: Application, key: tuple[int, int]
 ) -> None:
+    """Wait for the batch window, then enqueue the collected uploads."""
     try:
         await asyncio.sleep(runtime.settings.upload_batch_window_seconds)
     except asyncio.CancelledError:
@@ -149,6 +160,7 @@ async def flush_upload_batch_after_delay(
 async def enqueue_upload_batch(
     runtime: BotRuntime, application: Application, batch: UploadBatch
 ) -> None:
+    """Turn a buffered upload batch into queue jobs."""
     if batch.request.cancelled:
         return
     batch.request.title = "Telegram upload" if len(batch.uploads) == 1 else "Telegram uploads"
@@ -173,6 +185,7 @@ async def enqueue_upload_request(
     uploads: list[BufferedUpload],
     application: Application,
 ) -> None:
+    """Create and enqueue upload jobs without the delayed batch buffer."""
     first = uploads[0]
     request_id = uuid4().hex
     status_message = await application.bot.send_message(
@@ -211,6 +224,7 @@ async def enqueue_upload_request(
 def upload_job_from_buffered(
     buffered: BufferedUpload, request: RequestState, index: int, total: int
 ) -> QueuedJob:
+    """Build a queue job from buffered Telegram upload metadata."""
     return QueuedJob(
         kind=JobKind.UPLOAD,
         chat_id=buffered.chat_id,
@@ -228,6 +242,7 @@ def upload_job_from_buffered(
 
 
 async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: Application) -> None:
+    """Download one Telegram-uploaded file and store it in the music directory."""
     bot = application.bot
     assert job.upload is not None
     filename = job.upload.filename
@@ -241,6 +256,8 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
         await update_request(runtime, application, request)
     destination = upload_destination(runtime.settings.music_dir, filename)
     if destination.exists():
+        # Uploads keep their original filename, so an existing destination means
+        # the same file/name has already been synced.
         relative_path = destination.relative_to(runtime.settings.music_dir).as_posix()
         if request:
             request.stage = StatusStage.SKIPPED
@@ -261,6 +278,8 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
         return
 
     runtime.settings.download_tmp_dir.mkdir(parents=True, exist_ok=True)
+    # Download to temp storage first. Only after Telegram's file transfer
+    # completes do we move the file into the final music library path.
     temp_path = (
         runtime.settings.download_tmp_dir / f"{job.upload.file_unique_id}-{Path(destination).name}"
     )
@@ -332,6 +351,7 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
 
 
 def audio_document_filename(update: Update) -> str | None:
+    """Return a filename when a Telegram document looks like audio."""
     document = update.effective_message.document if update.effective_message else None
     if not document:
         return None
@@ -351,6 +371,7 @@ async def retry_upload_job(
     filename: str,
     exc: BaseException,
 ) -> bool:
+    """Update status and raise RetryJob when an upload failure should retry."""
     decision = retry_decision(job, exc)
     if decision != RetryDecision.RETRY:
         return False

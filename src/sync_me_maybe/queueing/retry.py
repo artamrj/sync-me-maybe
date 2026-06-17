@@ -1,3 +1,5 @@
+"""Retry decisions and user-facing retry messages for queue jobs."""
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -10,16 +12,21 @@ from sync_me_maybe.queueing.queue import QueuedJob
 
 
 class RetryDecision(StrEnum):
+    """Possible outcomes after a queued job raises an exception."""
+
     RETRY = "retry"
     FAIL = "fail"
     CANCEL = "cancel"
 
 
 class RetryableException(Protocol):
+    """Protocol for exceptions that expose a retryable flag."""
+
     retryable: bool
 
 
 def retry_delay_seconds(job: QueuedJob) -> int | None:
+    """Return the configured backoff delay for the job's current attempt."""
     index = max(job.attempt - 1, 0)
     if index >= len(job.retry_backoff_seconds):
         return None
@@ -27,10 +34,12 @@ def retry_delay_seconds(job: QueuedJob) -> int | None:
 
 
 def next_attempt(job: QueuedJob) -> QueuedJob:
+    """Return a copy of the job representing the next retry attempt."""
     return replace(job, attempt=job.attempt + 1)
 
 
 def retry_detail(job: QueuedJob, delay_seconds: int, reason: str) -> str:
+    """Render status text that explains when and why a retry will happen."""
     next_attempt_number = min(job.attempt + 1, job.max_attempts)
     return (
         f"Retry {next_attempt_number}/{job.max_attempts} "
@@ -39,6 +48,7 @@ def retry_detail(job: QueuedJob, delay_seconds: int, reason: str) -> str:
 
 
 def retry_decision(job: QueuedJob, exc: BaseException) -> RetryDecision:
+    """Choose whether a failed queue job should retry, fail, or cancel."""
     if is_cancelled_error(exc):
         return RetryDecision.CANCEL
     if not is_retryable_error(exc):
@@ -51,6 +61,7 @@ def retry_decision(job: QueuedJob, exc: BaseException) -> RetryDecision:
 
 
 def is_retryable_error(exc: BaseException) -> bool:
+    """Detect retryable errors, including wrapped causes from provider code."""
     if isinstance(exc, (TimedOut, NetworkError)):
         return True
     retryable = getattr(exc, "retryable", None)
@@ -63,6 +74,7 @@ def is_retryable_error(exc: BaseException) -> bool:
 
 
 def is_cancelled_error(exc: BaseException) -> bool:
+    """Detect user cancellations, including wrapped causes."""
     if "Cancelled by user" in str(exc):
         return True
     cause = exc.__cause__

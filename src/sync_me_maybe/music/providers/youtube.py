@@ -1,3 +1,5 @@
+"""YouTube and YouTube Music provider adapter."""
+
 from __future__ import annotations
 
 import asyncio
@@ -18,12 +20,15 @@ from sync_me_maybe.music.urls import ClassifiedLink, LinkKind, LinkScope
 
 
 class YouTubeProvider:
+    """Handles direct YouTube downloads and YouTube playlist expansion."""
+
     kind = LinkKind.YOUTUBE
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings
 
     def classify(self, url: str) -> ClassifiedLink | None:
+        """Recognize YouTube hosts and distinguish playlists from tracks."""
         parsed = urlparse(url)
         host = parsed.netloc.lower()
         if host.startswith("www."):
@@ -36,14 +41,17 @@ class YouTubeProvider:
         return ClassifiedLink(LinkKind.YOUTUBE, url)
 
     async def resolve_track(self, link: ClassifiedLink) -> ResolvedTrack:
+        """Use YouTube links directly because yt-dlp can download them."""
         return ResolvedTrack(source_url=link.url, download_url=link.url)
 
     async def expand_collection(self, link: ClassifiedLink) -> list[TrackSearchItem]:
+        """Read a playlist as metadata-only entries in a worker thread."""
         if link.scope == LinkScope.TRACK:
             raise unsupported_collection()
         return await asyncio.to_thread(self._playlist_sync, link.url)
 
     def _playlist_sync(self, url: str) -> list[TrackSearchItem]:
+        """Extract playlist entries without downloading media."""
         options: dict[str, Any] = {
             "extract_flat": "in_playlist",
             "quiet": True,

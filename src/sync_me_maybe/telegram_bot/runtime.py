@@ -1,3 +1,5 @@
+"""Shared in-memory state for one running bot process."""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +21,8 @@ from sync_me_maybe.ui.messages import StatusStage
 
 @dataclass
 class RequestState:
+    """User-visible request status shared by queue jobs and callbacks."""
+
     id: str
     chat_id: int
     status_message_id: int
@@ -39,6 +43,8 @@ class RequestState:
 
 @dataclass
 class BufferedUpload:
+    """Upload metadata held briefly while nearby files are batched together."""
+
     chat_id: int
     original_message_id: int
     user_id: int
@@ -47,6 +53,8 @@ class BufferedUpload:
 
 @dataclass
 class UploadBatch:
+    """Pending group of uploads from the same chat/user within the batch window."""
+
     key: tuple[int, int]
     request: RequestState
     uploads: list[BufferedUpload]
@@ -54,8 +62,12 @@ class UploadBatch:
 
 
 class BotRuntime:
+    """Container for services and mutable process-local bot state."""
+
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        # Callback data in Telegram buttons must be short, so paths/results are
+        # remembered in memory and buttons carry only generated tokens.
         self.path_callbacks: dict[str, str] = {}
         self.queue = DownloadQueue()
         self.resolver = LinkResolver()
@@ -70,15 +82,18 @@ class BotRuntime:
         )
 
     def allowed(self, update: Update) -> bool:
+        """Check whether the effective Telegram user can use protected actions."""
         user_id = update.effective_user.id if update.effective_user else None
         return is_allowed(user_id, self.settings.allowed_telegram_user_ids)
 
     def remember_path(self, relative_path: str) -> str:
+        """Store one path for later display through an inline keyboard callback."""
         token = uuid4().hex[:16]
         self.path_callbacks[token] = relative_path
         return f"path:{token}"
 
     def remember_results(self, request: RequestState) -> str:
+        """Store a compact result list for multi-item requests."""
         token = uuid4().hex[:16]
         shown = request.paths[:8]
         more = len(request.paths) - len(shown)
@@ -87,6 +102,9 @@ class BotRuntime:
         return f"results:{token}"
 
     async def process_job(self, job: QueuedJob, application: Application) -> None:
+        """Dispatch queued work to the handler module that owns that job kind."""
+        # Imports stay inside the method to avoid circular imports: handlers need
+        # BotRuntime, and BotRuntime needs to call back into those handlers.
         if job.kind == JobKind.LINK:
             from sync_me_maybe.telegram_bot.handlers import process_link_job
 

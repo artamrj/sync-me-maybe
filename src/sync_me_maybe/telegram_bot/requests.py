@@ -1,3 +1,5 @@
+"""Helpers for rendering and updating aggregate request status messages."""
+
 from __future__ import annotations
 
 from telegram.ext import Application
@@ -9,6 +11,7 @@ from sync_me_maybe.ui.messages import RequestView, StatusStage, render_request, 
 
 
 async def request_position(runtime: BotRuntime, request: RequestState) -> int | None:
+    """Return the best visible queue position among jobs in one request."""
     positions = [
         position
         for job_id in request.job_ids
@@ -20,6 +23,7 @@ async def request_position(runtime: BotRuntime, request: RequestState) -> int | 
 
 
 async def render_request_text(runtime: BotRuntime, request: RequestState) -> str:
+    """Render the current RequestState into Telegram message text."""
     return render_request(
         RequestView(
             title=request.title,
@@ -37,9 +41,12 @@ async def render_request_text(runtime: BotRuntime, request: RequestState) -> str
 
 
 def request_keyboard(runtime: BotRuntime, request: RequestState):
+    """Build the action keyboard appropriate for the request's current state."""
     source_url = request.source_urls[0] if len(request.source_urls) == 1 else None
     relative_path = request.paths[0] if request.total == 1 and request.paths else None
     done = request.completed + request.skipped + request.failed
+    # Finished requests should not show refresh/cancel buttons, but can still
+    # expose source URLs and stored result paths.
     is_terminal = (
         request.cancelled
         or request.stage in {StatusStage.DONE, StatusStage.FAILED, StatusStage.CANCELLED}
@@ -60,6 +67,7 @@ def request_keyboard(runtime: BotRuntime, request: RequestState):
 async def update_request(
     runtime: BotRuntime, application: Application, request: RequestState
 ) -> None:
+    """Edit the Telegram status message for a RequestState."""
     if request.cancelled:
         request.stage = StatusStage.CANCELLED
     await safe_edit_message(
@@ -72,12 +80,14 @@ async def update_request(
 
 
 def job_request(runtime: BotRuntime, job: QueuedJob) -> RequestState | None:
+    """Find the aggregate request that owns a queued job."""
     if not job.request_id:
         return None
     return runtime.requests.get(job.request_id)
 
 
 def request_cancelled(request: RequestState | None) -> bool:
+    """Return whether a request exists and has been cancelled."""
     return bool(request and request.cancelled)
 
 
@@ -87,6 +97,7 @@ async def mark_request_cancelled(
     request: RequestState,
     detail: str = "Stopped by user.",
 ) -> None:
+    """Mark a request cancelled and update its Telegram status message."""
     request.cancelled = True
     request.cancel_event.set()
     request.stage = StatusStage.CANCELLED

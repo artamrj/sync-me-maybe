@@ -1,3 +1,5 @@
+"""Inbound Telegram message handling for music links and collections."""
+
 from __future__ import annotations
 
 import logging
@@ -51,6 +53,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route a non-command Telegram message to upload, link, or collection flow."""
     runtime: BotRuntime = context.application.bot_data["runtime"]
     message = update.effective_message
     if message is None:
@@ -59,6 +62,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await message.reply_text("Not authorized.")
         return
 
+    # Telegram can send audio either as a dedicated audio object or as a generic
+    # document with an audio MIME type/extension.
     if message.audio or audio_document_filename(update):
         await buffer_upload(update, runtime, context.application)
         return
@@ -69,6 +74,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await message.reply_text("Send an audio file, music link, playlist link, or album link.")
         return
 
+    # Classify every URL first so a single Telegram reply can report unsupported
+    # links while still queueing the supported ones from the same message.
     classified_links = []
     unsupported: list[str] = []
     total = len(urls)
@@ -108,6 +115,7 @@ async def enqueue_link(
     link_index: int = 1,
     link_total: int = 1,
 ) -> None:
+    """Create a one-track request and enqueue its download job."""
     message = update.effective_message
     assert message is not None
     detail = f"Link {link_index} of {link_total}" if link_total > 1 else None
@@ -118,6 +126,8 @@ async def enqueue_link(
         reply_to_message_id=message.message_id,
         allow_sending_without_reply=True,
     )
+    # A RequestState owns the user-facing Telegram status message; the QueuedJob
+    # below owns the actual work item processed by the background queue.
     request = RequestState(
         id=request_id,
         chat_id=message.chat_id,
@@ -163,6 +173,7 @@ async def enqueue_collection(
     link_index: int = 1,
     link_total: int = 1,
 ) -> None:
+    """Create a collection request and enqueue the expansion job."""
     message = update.effective_message
     assert message is not None
     detail = f"Link {link_index} of {link_total}" if link_total > 1 else None
@@ -210,6 +221,7 @@ async def enqueue_collection(
 async def enqueue_link_batch(
     update: Update, runtime: BotRuntime, classified_links, unsupported: list[str], link_total: int
 ) -> None:
+    """Create one aggregate request for a message containing multiple links."""
     message = update.effective_message
     assert message is not None
     request_id = uuid4().hex
@@ -241,6 +253,8 @@ async def enqueue_link_batch(
     runtime.requests[request_id] = request
 
     for request_index, (link_index, classified) in enumerate(classified_links, start=1):
+        # Track links download directly; playlist/album links first expand into
+        # child jobs and then those child jobs download like normal links.
         source = (
             classified.kind.value
             if classified.scope == LinkScope.TRACK
@@ -272,6 +286,7 @@ async def enqueue_link_batch(
 
 
 async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: Application) -> None:
+    """Resolve, download, and store one link or one expanded collection track."""
     bot = application.bot
     assert job.classified_link is not None
     classified = job.classified_link
@@ -297,6 +312,8 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
                 job.status_message_id,
                 render_status(StatusStage.THINKING, source, job_detail(job, "Preparing search.")),
             )
+        # Collection child jobs already carry a ResolvedTrack. Plain link jobs
+        # resolve provider metadata here before downloading.
         resolved = (
             job.resolved_track
             if isinstance(job.resolved_track, ResolvedTrack)
@@ -323,6 +340,8 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
             resolved, cancel_check=request.cancel_event.is_set if request else None
         )
         if request_cancelled(request):
+            # If cancellation happened just after the blocking download returned,
+            # remove the temp file before surfacing the cancellation.
             downloaded.temp_file.unlink(missing_ok=True)
             raise DownloadError("Cancelled by user.")
         destination = track_destination(runtime.settings.music_dir, downloaded.info, ".mp3")
@@ -382,6 +401,9 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         return
 
     if request:
+        # Aggregate requests stay on one Telegram message. Each completed job
+        # updates counters and paths until the whole request reaches a terminal
+        # status.
         if result.skipped:
             request.skipped += 1
         else:
@@ -412,6 +434,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
 async def process_collection_job(
     job: QueuedJob, runtime: BotRuntime, application: Application
 ) -> None:
+    """Expand one playlist/album and enqueue child track download jobs."""
     bot = application.bot
     assert job.classified_link is not None
     classified = job.classified_link
@@ -455,6 +478,8 @@ async def process_collection_job(
         return
 
     if request:
+        # The collection expansion job itself counted as one item initially. Once
+        # tracks are known, the request total grows to include every child track.
         request.total += max(len(tracks) - 1, 0)
         request.stage = StatusStage.QUEUED
         request.current = f"{len(tracks)} track(s) detected"
@@ -466,6 +491,8 @@ async def process_collection_job(
                 await mark_request_cancelled(runtime, application, request)
                 break
             detail = f"Track {index}/{len(tracks)}"
+            # Child jobs use ytsearch URLs, so the downloader can handle them the
+            # same way it handles Spotify/Apple/Shazam single-track links.
             resolved = ResolvedTrack(
                 source_url=track.source_url or classified.url,
                 download_url=f"ytsearch1:{track.search_query}",
@@ -495,6 +522,8 @@ async def process_collection_job(
         await update_request(runtime, application, request)
         return
 
+    # Older/simple collection flow uses one parent progress message plus separate
+    # child status messages when no aggregate RequestState exists.
     runtime.batch_progress[job.status_message_id] = {
         "source": source,
         "total": len(tracks),
@@ -564,6 +593,7 @@ async def retry_link_job(
     source: str,
     exc: BaseException,
 ) -> bool:
+    """Update status and raise RetryJob when a link failure should retry."""
     decision = retry_decision(job, exc)
     if decision != RetryDecision.RETRY:
         return False
@@ -584,6 +614,8 @@ async def retry_link_job(
             job.status_message_id,
             render_status(StatusStage.QUEUED, source, detail),
         )
+    # Raising this special exception hands control back to DownloadQueue, which
+    # schedules the delayed retry without treating it as an unexpected failure.
     raise RetryJob(retry_job, str(exc), delay)
 
 
@@ -595,6 +627,7 @@ async def retry_collection_job(
     source: str,
     exc: BaseException,
 ) -> bool:
+    """Update status and raise RetryJob when collection expansion should retry."""
     decision = retry_decision(job, exc)
     if decision != RetryDecision.RETRY:
         return False
@@ -624,6 +657,7 @@ async def retry_collection_job(
 async def update_parent_progress(
     job: QueuedJob, runtime: BotRuntime, application: Application, outcome: str
 ) -> None:
+    """Update the parent collection message after a child track finishes."""
     if not job.parent_status_message_id:
         return
     progress = runtime.batch_progress.get(job.parent_status_message_id)
@@ -646,6 +680,7 @@ async def update_parent_progress(
 
 
 def job_detail(job: QueuedJob, detail: str) -> str:
+    """Prefix details with track position for collection child jobs."""
     if job.batch_index and job.batch_total:
         return f"Track {job.batch_index}/{job.batch_total}\n{detail}"
     return detail

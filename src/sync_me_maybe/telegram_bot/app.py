@@ -1,3 +1,5 @@
+"""Telegram application wiring and lifecycle hooks."""
+
 from __future__ import annotations
 
 from telegram import BotCommand
@@ -11,6 +13,7 @@ from sync_me_maybe.telegram_bot.runtime import BotRuntime
 
 
 def build_application(settings: Settings) -> Application:
+    """Create the python-telegram-bot application and register all handlers."""
     runtime = BotRuntime(settings)
     application = (
         Application.builder()
@@ -19,6 +22,8 @@ def build_application(settings: Settings) -> Application:
         .post_shutdown(post_shutdown)
         .build()
     )
+    # bot_data is the shared place python-telegram-bot exposes to handlers. The
+    # runtime object keeps queue, resolver, downloader, and in-memory state.
     application.bot_data["runtime"] = runtime
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
@@ -31,6 +36,7 @@ def build_application(settings: Settings) -> Application:
 
 
 async def post_init(application: Application) -> None:
+    """Start background services once Telegram has initialized the app."""
     runtime: BotRuntime = application.bot_data["runtime"]
     runtime.queue.start(lambda job: runtime.process_job(job, application))
     await application.bot.set_my_commands(
@@ -45,5 +51,6 @@ async def post_init(application: Application) -> None:
 
 
 async def post_shutdown(application: Application) -> None:
+    """Stop background queue work during graceful shutdown."""
     runtime: BotRuntime = application.bot_data["runtime"]
     await runtime.queue.stop()

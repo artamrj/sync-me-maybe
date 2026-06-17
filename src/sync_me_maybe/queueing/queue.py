@@ -1,3 +1,5 @@
+"""In-memory FIFO queue that serializes downloads and delayed retries."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,6 +17,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 class JobKind(StrEnum):
+    """Kinds of work the queue worker knows how to dispatch."""
+
     LINK = "link"
     UPLOAD = "upload"
     COLLECTION = "collection"
@@ -22,6 +26,8 @@ class JobKind(StrEnum):
 
 @dataclass(frozen=True)
 class UploadPayload:
+    """Telegram file identifiers needed to fetch an uploaded audio file later."""
+
     file_id: str
     file_unique_id: str
     filename: str
@@ -29,6 +35,8 @@ class UploadPayload:
 
 @dataclass
 class QueuedJob:
+    """One unit of work visible in the queue and status messages."""
+
     kind: JobKind
     chat_id: int
     original_message_id: int
@@ -54,6 +62,8 @@ class QueuedJob:
 
 
 class RetryJob(RuntimeError):
+    """Internal signal used by processors to requeue a job after a delay."""
+
     def __init__(self, job: QueuedJob, reason: str, delay_seconds: int) -> None:
         super().__init__(reason)
         self.job = job
@@ -63,11 +73,15 @@ class RetryJob(RuntimeError):
 
 @dataclass(frozen=True)
 class QueueSnapshot:
+    """Read-only view used by the /queue command."""
+
     active: QueuedJob | None
     pending: tuple[QueuedJob, ...]
 
 
 class DownloadQueue:
+    """Single-worker async queue for download and upload processing."""
+
     def __init__(self) -> None:
         self._pending: deque[QueuedJob] = deque()
         self._active: QueuedJob | None = None
@@ -77,6 +91,7 @@ class DownloadQueue:
         self._delayed_retry_jobs: dict[str, QueuedJob] = {}
 
     async def enqueue(self, job: QueuedJob) -> int:
+        """Append a job and return its visible queue position."""
         async with self._condition:
             self._pending.append(job)
             position = len(self._pending) + (1 if self._active else 0)
@@ -84,10 +99,12 @@ class DownloadQueue:
             return position
 
     async def snapshot(self) -> QueueSnapshot:
+        """Return the active job plus pending jobs without exposing internals."""
         async with self._condition:
             return QueueSnapshot(self._active, tuple(self._pending))
 
     async def position_of(self, job_id: str) -> int | None:
+        """Return the current queue position for a job ID, or None if finished."""
         async with self._condition:
             if self._active and self._active.id == job_id:
                 return 0
@@ -97,7 +114,10 @@ class DownloadQueue:
             return None
 
     async def cancel_request(self, request_id: str) -> int:
+        """Remove pending and delayed jobs that belong to one user request."""
         async with self._condition:
+            # Active work is not forcibly interrupted here; request cancellation
+            # is also carried by RequestState.cancel_event for blocking work.
             kept: deque[QueuedJob] = deque()
             removed = 0
             while self._pending:
@@ -117,9 +137,12 @@ class DownloadQueue:
             return removed
 
     def retry_later(self, job: QueuedJob, delay_seconds: int) -> None:
+        """Schedule a failed job to return to the queue after its backoff."""
         async def reenqueue() -> None:
             try:
                 await asyncio.sleep(delay_seconds)
+                # Re-enter the same FIFO queue after sleeping so retries do not
+                # block unrelated jobs while waiting for network recovery.
                 async with self._condition:
                     self._pending.append(job)
                     self._condition.notify()
@@ -137,11 +160,13 @@ class DownloadQueue:
         self._delayed_retry_jobs[job.id] = job
 
     def start(self, processor: Callable[[QueuedJob], Awaitable[None]]) -> None:
+        """Start the background worker if it is not already running."""
         if self._worker and not self._worker.done():
             return
         self._worker = asyncio.create_task(self._run(processor))
 
     async def stop(self) -> None:
+        """Cancel the worker and delayed retry tasks during bot shutdown."""
         if not self._worker:
             return
         self._worker.cancel()
@@ -157,8 +182,11 @@ class DownloadQueue:
             LOGGER.exception("Download queue worker stopped after an error")
 
     async def _run(self, processor: Callable[[QueuedJob], Awaitable[None]]) -> None:
+        """Continuously process one queued job at a time."""
         while True:
             async with self._condition:
+                # The condition lets enqueue/retry wake the worker without busy
+                # polling while the queue is empty.
                 while not self._pending:
                     await self._condition.wait()
                 job = self._pending.popleft()
@@ -167,6 +195,8 @@ class DownloadQueue:
             try:
                 await processor(job)
             except RetryJob as exc:
+                # Retry is an expected control path, not an unexpected worker
+                # crash. The job is stored separately until its delay expires.
                 self.retry_later(exc.job, exc.delay_seconds)
                 LOGGER.info(
                     "Retrying queue job %s attempt %s/%s in %ss: %s",
@@ -187,6 +217,7 @@ class DownloadQueue:
 
 
 def render_queue_snapshot(snapshot: QueueSnapshot, limit: int = 5) -> str:
+    """Render a compact queue summary for the Telegram /queue command."""
     if not snapshot.active and not snapshot.pending:
         return "✅ Queue is empty."
 

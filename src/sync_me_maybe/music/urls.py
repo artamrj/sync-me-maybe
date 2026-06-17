@@ -1,3 +1,5 @@
+"""URL extraction and provider classification for incoming Telegram messages."""
+
 from __future__ import annotations
 
 import re
@@ -6,6 +8,8 @@ from enum import StrEnum
 
 
 class LinkKind(StrEnum):
+    """Supported source families known by the resolver layer."""
+
     YOUTUBE = "youtube"
     SPOTIFY = "spotify"
     APPLE_MUSIC = "apple_music"
@@ -14,6 +18,8 @@ class LinkKind(StrEnum):
 
 
 class LinkScope(StrEnum):
+    """Whether a link points at one track or a collection of tracks."""
+
     TRACK = "track"
     PLAYLIST = "playlist"
     ALBUM = "album"
@@ -21,6 +27,8 @@ class LinkScope(StrEnum):
 
 @dataclass(frozen=True)
 class ClassifiedLink:
+    """Provider, URL, and scope information after classification."""
+
     kind: LinkKind
     url: str
     scope: LinkScope = LinkScope.TRACK
@@ -31,11 +39,13 @@ URL_RE = re.compile(r"https?://[^\s<>()]+", re.IGNORECASE)
 
 
 def extract_first_url(text: str | None) -> str | None:
+    """Return the first URL from message text, if any."""
     urls = extract_urls(text)
     return urls[0] if urls else None
 
 
 def extract_urls(text: str | None) -> list[str]:
+    """Extract unique URLs in message order."""
     if not text:
         return []
 
@@ -51,8 +61,11 @@ def extract_urls(text: str | None) -> list[str]:
 
 
 def classify_url(url: str) -> ClassifiedLink:
+    """Ask each provider whether it understands the URL."""
     from sync_me_maybe.music.providers.registry import build_providers
 
+    # Providers own their URL patterns, keeping this function as the simple
+    # dispatcher from raw Telegram text to provider-specific handling.
     for provider in build_providers():
         classified = provider.classify(url)
         if classified:

@@ -1,3 +1,5 @@
+"""Best-effort public metadata scraper for provider playlists and albums."""
+
 from __future__ import annotations
 
 import json
@@ -13,16 +15,20 @@ from sync_me_maybe.music.providers.common import int_or_none
 
 
 class PublicCollectionScraper:
+    """Extract track lists from public provider pages without API credentials."""
+
     def __init__(self, timeout_seconds: int = 20) -> None:
         self.timeout_seconds = timeout_seconds
 
     def collection(self, url: str) -> list[TrackSearchItem]:
+        """Try yt-dlp metadata first, then fall back to HTML/JSON scraping."""
         tracks = self.yt_dlp_entries(url)
         if tracks:
             return tracks
         return self.html_entries(url)
 
     def yt_dlp_entries(self, url: str) -> list[TrackSearchItem]:
+        """Ask yt-dlp for flat collection metadata without downloading media."""
         options: dict[str, Any] = {
             "extract_flat": "in_playlist",
             "quiet": True,
@@ -38,6 +44,7 @@ class PublicCollectionScraper:
         return tracks_from_entries((info or {}).get("entries") or [])
 
     def html_entries(self, url: str) -> list[TrackSearchItem]:
+        """Scrape embedded JSON from public HTML pages."""
         try:
             response = requests.get(
                 url, timeout=self.timeout_seconds, headers={"User-Agent": "Mozilla/5.0"}
@@ -56,12 +63,16 @@ class PublicCollectionScraper:
                 continue
             script_type = str(script.get("type") or "").lower()
             script_id = str(script.get("id") or "")
+            # Modern music pages often place the useful track list in JSON-LD,
+            # Next.js data, or another script tag instead of visible markup.
             if "json" in script_type or script_id == "__NEXT_DATA__":
                 parsed = loads_json(text)
                 if parsed is not None:
                     json_roots.append(parsed)
 
         if not json_roots:
+            # Some pages embed JSON-like blobs inside regular scripts. The
+            # balanced-object scan gives us a last chance before failing.
             json_roots.extend(extract_balanced_json_objects(response.text))
 
         tracks: list[TrackSearchItem] = []
@@ -71,6 +82,7 @@ class PublicCollectionScraper:
 
 
 def artists(artists_value: Any) -> str | None:
+    """Normalize provider-specific artist shapes into display text."""
     if isinstance(artists_value, dict):
         return clean_title(artists_value.get("name") or artists_value.get("artistName"))
     if not isinstance(artists_value, list):
@@ -84,6 +96,7 @@ def artists(artists_value: Any) -> str | None:
 
 
 def tracks_from_entries(entries: list[Any]) -> list[TrackSearchItem]:
+    """Convert yt-dlp playlist entries into queueable search items."""
     tracks: list[TrackSearchItem] = []
     for index, entry in enumerate(entries, start=1):
         if not isinstance(entry, dict):
@@ -107,6 +120,7 @@ def tracks_from_entries(entries: list[Any]) -> list[TrackSearchItem]:
 
 
 def walk_track_items(value: Any) -> list[TrackSearchItem]:
+    """Recursively search nested JSON for objects that look like tracks."""
     tracks: list[TrackSearchItem] = []
     if isinstance(value, dict):
         track = track_from_dict(value)
@@ -121,6 +135,7 @@ def walk_track_items(value: Any) -> list[TrackSearchItem]:
 
 
 def track_from_dict(value: dict[str, Any]) -> TrackSearchItem | None:
+    """Convert one provider JSON object into a track when it has enough data."""
     attrs = value.get("attributes")
     attrs = attrs if isinstance(attrs, dict) else {}
     source = {**value, **attrs}
@@ -139,6 +154,8 @@ def track_from_dict(value: dict[str, Any]) -> TrackSearchItem | None:
 
     if not title:
         return None
+    # Avoid treating every named object on a page as a track. A missing artist is
+    # allowed only when the JSON type or position strongly suggests music data.
     if (
         not artist
         and "musicrecording" not in type_value
@@ -152,6 +169,7 @@ def track_from_dict(value: dict[str, Any]) -> TrackSearchItem | None:
 
 
 def dedupe_tracks(tracks: list[TrackSearchItem]) -> list[TrackSearchItem]:
+    """Remove duplicate artist/title pairs while preserving page order."""
     deduped: list[TrackSearchItem] = []
     seen: set[tuple[str, str]] = set()
     for track in tracks:
@@ -164,6 +182,7 @@ def dedupe_tracks(tracks: list[TrackSearchItem]) -> list[TrackSearchItem]:
 
 
 def loads_json(text: str) -> Any | None:
+    """Parse JSON and return None when a script is not valid JSON."""
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -171,6 +190,7 @@ def loads_json(text: str) -> Any | None:
 
 
 def extract_balanced_json_objects(text: str) -> list[Any]:
+    """Find JSON objects near music-related markers in raw HTML text."""
     roots: list[Any] = []
     for marker in ('"tracks"', '"trackList"', '"trackName"', '"artistName"'):
         start = 0
@@ -190,6 +210,7 @@ def extract_balanced_json_objects(text: str) -> list[Any]:
 
 
 def balanced_object(text: str, start: int) -> str:
+    """Return a balanced JSON object substring starting at an opening brace."""
     depth = 0
     in_string = False
     escaped = False

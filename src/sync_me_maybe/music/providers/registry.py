@@ -1,3 +1,5 @@
+"""Provider factory and lookup helpers."""
+
 from __future__ import annotations
 
 from sync_me_maybe.config import Settings
@@ -10,6 +12,7 @@ from sync_me_maybe.music.urls import LinkKind
 
 
 def build_providers(settings: Settings | None = None) -> list[Provider]:
+    """Create provider adapters in classification priority order."""
     return [
         YouTubeProvider(settings),
         SpotifyProvider(),
@@ -19,6 +22,7 @@ def build_providers(settings: Settings | None = None) -> list[Provider]:
 
 
 def provider_for(kind: LinkKind, providers: list[Provider] | None = None) -> Provider | None:
+    """Return the provider that handles a classified link kind."""
     for provider in providers or build_providers():
         if provider.kind == kind:
             return provider

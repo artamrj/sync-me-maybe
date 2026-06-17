@@ -1,3 +1,5 @@
+"""Inline keyboard callback handling for status messages."""
+
 from __future__ import annotations
 
 from telegram import Update
@@ -9,6 +11,7 @@ from sync_me_maybe.ui.messages import StatusStage
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route button presses from bot status messages."""
     runtime: BotRuntime = context.application.bot_data["runtime"]
     query = update.callback_query
     if not query:
@@ -20,6 +23,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     data = query.data or ""
     if data == "health":
+        # Health is exposed as both a command and a button so users can check
+        # storage access from the welcome/status keyboard.
         try:
             runtime.settings.music_dir.mkdir(parents=True, exist_ok=True)
             probe = runtime.settings.music_dir / ".sync-me-maybe-health"
@@ -32,6 +37,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if data.startswith("path:"):
+        # Path/result callbacks intentionally read from memory. If the process
+        # restarted, the file may still exist but the short callback token is gone.
         token = data.removeprefix("path:")
         await query.answer(
             runtime.path_callbacks.get(token, "Path is no longer available in memory."),
@@ -70,6 +77,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         }:
             await query.answer("This request is already finished.", show_alert=True)
             return
+        # Cancellation has two parts: remove pending queue work and set the
+        # request event so active blocking download/upload code can stop itself.
         removed = await runtime.queue.cancel_request(request_id)
         request.cancelled = True
         request.cancel_event.set()

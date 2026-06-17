@@ -1,3 +1,9 @@
+"""Runtime configuration loaded from environment variables.
+
+This module keeps environment parsing and validation in one place so the rest of
+the bot can work with a typed ``Settings`` object instead of raw strings.
+"""
+
 from __future__ import annotations
 
 import os
@@ -6,10 +12,17 @@ from pathlib import Path
 
 
 class ConfigError(ValueError):
+    """Raised when required environment configuration is missing or invalid."""
+
     pass
 
 
 def parse_user_ids(raw: str | None) -> set[int]:
+    """Parse the allowlist string into Telegram user IDs.
+
+    The env var accepts commas or semicolons so it is easy to paste IDs from
+    different shells or config UIs.
+    """
     if not raw:
         return set()
 
@@ -27,6 +40,8 @@ def parse_user_ids(raw: str | None) -> set[int]:
 
 @dataclass(frozen=True)
 class Settings:
+    """Validated settings used by every subsystem after startup."""
+
     telegram_bot_token: str
     allowed_telegram_user_ids: set[int]
     music_dir: Path
@@ -39,6 +54,11 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        """Build settings from process environment variables.
+
+        Validation happens at startup so configuration errors fail fast before
+        the Telegram polling loop begins.
+        """
         token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
         if not token:
             raise ConfigError("TELEGRAM_BOT_TOKEN is required")
@@ -49,6 +69,8 @@ class Settings:
                 "ALLOWED_TELEGRAM_USER_IDS must contain at least one Telegram user ID"
             )
 
+        # Parse numeric limits explicitly so users get actionable messages
+        # instead of later failures inside queueing, collection expansion, or yt-dlp.
         cookies = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
         max_seconds = os.environ.get("MAX_DOWNLOAD_SECONDS", "900").strip()
         try:

@@ -1,3 +1,5 @@
+"""Small parsing helpers shared by provider adapters."""
+
 from __future__ import annotations
 
 import re
@@ -20,6 +22,7 @@ GENERIC_SLUG_PARTS = {
 
 
 def clean_slug(value: str | None) -> str | None:
+    """Turn a URL path segment into readable search text."""
     from sync_me_maybe.music.filenames import clean_title
 
     if not value:
@@ -33,12 +36,14 @@ def clean_slug(value: str | None) -> str | None:
 
 
 def usable_slug_query(value: str | None) -> bool:
+    """Reject slug fragments that are too generic to be useful search queries."""
     if not value:
         return False
     return not value.isdigit() and value.casefold() not in GENERIC_SLUG_PARTS
 
 
 def slug_query(url: str) -> str | None:
+    """Find the best usable search phrase from the end of a URL path."""
     parsed = urlparse(url)
     for part in reversed([unquote(part) for part in parsed.path.split("/") if part]):
         cleaned = clean_slug(part)
@@ -48,6 +53,7 @@ def slug_query(url: str) -> str | None:
 
 
 def int_or_none(value: Any) -> int | None:
+    """Convert loose provider metadata into an integer when possible."""
     try:
         return int(value)
     except (TypeError, ValueError):

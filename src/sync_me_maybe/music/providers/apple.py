@@ -1,3 +1,9 @@
+"""Apple Music provider adapter.
+
+Apple Music links are converted into YouTube Music searches or expanded through
+public page metadata; no Apple Music audio is downloaded directly.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,12 +16,15 @@ from sync_me_maybe.music.urls import ClassifiedLink, LinkKind, LinkScope
 
 
 class AppleMusicProvider:
+    """Resolve Apple Music links and expand public Apple Music collections."""
+
     kind = LinkKind.APPLE_MUSIC
 
     def __init__(self, timeout_seconds: int = 20) -> None:
         self.public_scraper = PublicCollectionScraper(timeout_seconds)
 
     def classify(self, url: str) -> ClassifiedLink | None:
+        """Recognize Apple Music/iTunes track, album, and playlist URLs."""
         parsed = urlparse(url)
         host = parsed.netloc.lower()
         if host.startswith("www."):
@@ -31,6 +40,7 @@ class AppleMusicProvider:
         return ClassifiedLink(LinkKind.APPLE_MUSIC, url)
 
     async def resolve_track(self, link: ClassifiedLink) -> ResolvedTrack:
+        """Build a YouTube Music search query from the Apple Music URL."""
         query = self._apple_music_query(link.url)
         if not query:
             raise ProviderError(
@@ -44,9 +54,11 @@ class AppleMusicProvider:
         )
 
     async def expand_collection(self, link: ClassifiedLink) -> list[TrackSearchItem]:
+        """Expand albums/playlists using public metadata extraction."""
         return await asyncio.to_thread(self._collection_sync, link)
 
     def _collection_sync(self, link: ClassifiedLink) -> list[TrackSearchItem]:
+        """Return track items from a public Apple Music collection page."""
         tracks = self.public_scraper.collection(link.url)
         if not tracks:
             raise ProviderError(
@@ -57,6 +69,7 @@ class AppleMusicProvider:
         return tracks
 
     def _apple_music_query(self, url: str) -> str | None:
+        """Prefer the album/track slug, then fall back to the best URL segment."""
         parsed = urlparse(url)
         parts = [unquote(part) for part in parsed.path.split("/") if part]
         if "album" in parts:
