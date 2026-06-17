@@ -44,7 +44,7 @@ Install and run locally:
 ```sh
 python -m venv .venv
 . .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e .
 sync-me-maybe
 ```
 
@@ -79,7 +79,5 @@ If a message contains multiple links, each supported link becomes its own queue 
 ```sh
 python -m venv .venv
 . .venv/bin/activate
-pip install -e ".[dev]"
-pytest
-python -m compileall -q src tests
+pip install -e .
 ```
