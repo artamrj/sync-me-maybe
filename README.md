@@ -56,11 +56,10 @@ Published images are available from GitHub Container Registry:
 ghcr.io/artamrj/sync-me-maybe:latest
 ```
 
-For a NAS, VPS, or home server deployment, copy `.env.example` to `.env` and set the Telegram token, allowed user IDs, host paths, and host UID/GID. On Linux hosts, get the UID and GID for the account that should own downloaded music:
+For a NAS, VPS, or home server deployment, copy `.env.example` to `.env` and set the Telegram token, allowed user IDs, host paths, and host UID/GID. On Linux or Synology hosts, get the UID and GID for the account that should own downloaded music:
 
 ```sh
-id -u
-id -g
+id
 ```
 
 Then start the service:
@@ -71,13 +70,15 @@ docker compose up -d
 docker compose logs -f
 ```
 
-The compose file runs the container as `${PUID}:${PGID}` and mounts:
+The compose file passes `PUID` and `PGID` into the container and mounts:
 
 - `${MUSIC_DIR_HOST}` to `/music`
 - `${DOWNLOAD_TMP_DIR_HOST}` to `/tmp/sync-me-maybe`
 - `${YTDLP_COOKIES_FILE_HOST}` to `/config/cookies.txt` for optional yt-dlp cookies
 
-Use writable host folders owned by the configured UID/GID. The app sets `MUSIC_DIR=/music` and `DOWNLOAD_TMP_DIR=/tmp/sync-me-maybe` inside the container, so the container remains stateless except for mounted music, temporary downloads, and optional cookies. To use cookies, set `YTDLP_COOKIES_FILE=/config/cookies.txt` and point `YTDLP_COOKIES_FILE_HOST` at the host cookies file.
+Use writable host folders for the configured UID/GID. The app sets `MUSIC_DIR=/music` and `DOWNLOAD_TMP_DIR=/tmp/sync-me-maybe` inside the container, so the container remains stateless except for mounted music, temporary downloads, and optional cookies. To use cookies, set `YTDLP_COOKIES_FILE=/config/cookies.txt` and point `YTDLP_COOKIES_FILE_HOST` at the host cookies file.
+
+The compose file intentionally does not use Docker's `user: ${PUID}:${PGID}` setting because some NAS runtimes reject that switch with `operation not permitted`. If your NAS reports `uid=1000(arta) gid=10(admin)`, use `PUID=1000` and `PGID=10`.
 
 Tags:
 
