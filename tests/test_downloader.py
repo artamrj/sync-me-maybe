@@ -55,3 +55,30 @@ def test_downloader_cancellation_cleans_partial_files(tmp_path, monkeypatch) -> 
         )
 
     assert not list(tmp_path.glob("*"))
+
+
+def test_downloader_timeout_cleans_partial_files(tmp_path, monkeypatch) -> None:
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def extract_info(self, url, download):
+            partial = tmp_path / self.options["outtmpl"].split("/")[-1].replace("%(ext)s", "part")
+            partial.write_text("partial", encoding="utf-8")
+            for hook in self.options["progress_hooks"]:
+                hook({"status": "downloading"})
+            return {}
+
+    monkeypatch.setattr("sync_me_maybe.downloader.yt_dlp.YoutubeDL", FakeYoutubeDL)
+    downloader = YtDlpDownloader(tmp_path, max_seconds=-1)
+
+    with pytest.raises(DownloadError, match="MAX_DOWNLOAD_SECONDS"):
+        downloader._download_sync(ResolvedTrack(source_url="x", download_url="ytsearch1:test"))
+
+    assert not list(tmp_path.glob("*"))

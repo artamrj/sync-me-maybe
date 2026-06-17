@@ -52,20 +52,13 @@ def test_settings_rejects_invalid_upload_batch_window(monkeypatch) -> None:
         Settings.from_env()
 
 
-def test_settings_rejects_synology_host_path_as_music_dir(monkeypatch) -> None:
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
-    monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "123")
-    monkeypatch.setenv("MUSIC_DIR", "/volume1/music/2-library/telegram-bot")
-
-    with pytest.raises(ConfigError, match="MUSIC_DIR is a container path"):
-        Settings.from_env()
-
-
-def test_settings_keeps_music_dir_container_default(monkeypatch) -> None:
+def test_settings_uses_local_path_defaults(monkeypatch) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:ABC")
     monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "123")
     monkeypatch.delenv("MUSIC_DIR", raising=False)
+    monkeypatch.delenv("DOWNLOAD_TMP_DIR", raising=False)
 
     settings = Settings.from_env()
 
-    assert settings.music_dir.as_posix() == "/music"
+    assert settings.music_dir.as_posix() == "music"
+    assert settings.download_tmp_dir.as_posix() == "tmp/sync-me-maybe"

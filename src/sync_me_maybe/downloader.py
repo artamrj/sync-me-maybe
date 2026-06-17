@@ -38,13 +38,23 @@ class YtDlpDownloader:
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
         run_id = uuid.uuid4().hex
         output_template = str(self.tmp_dir / f"{run_id}.%(ext)s")
+        start = time.monotonic()
+
+        def cleanup_partial_files() -> None:
+            for path in self.tmp_dir.glob(f"{run_id}*"):
+                path.unlink(missing_ok=True)
 
         def check_cancel() -> None:
             if cancel_check and cancel_check():
                 raise DownloadError("Cancelled by user.")
 
+        def check_timeout() -> None:
+            if time.monotonic() - start > self.max_seconds:
+                raise DownloadError("Download exceeded MAX_DOWNLOAD_SECONDS.")
+
         def progress_hook(_: dict[str, Any]) -> None:
             check_cancel()
+            check_timeout()
 
         options: dict[str, Any] = {
             "format": "bestaudio/best",
@@ -65,23 +75,19 @@ class YtDlpDownloader:
         if self.cookies_file:
             options["cookiefile"] = str(self.cookies_file)
 
-        start = time.monotonic()
         try:
             check_cancel()
+            check_timeout()
             with yt_dlp.YoutubeDL(options) as ydl:
                 info = ydl.extract_info(resolved.download_url, download=True)
             check_cancel()
+            check_timeout()
         except DownloadError:
-            for path in self.tmp_dir.glob(f"{run_id}*"):
-                path.unlink(missing_ok=True)
+            cleanup_partial_files()
             raise
         except Exception as exc:  # noqa: BLE001 - yt-dlp raises many concrete exception types.
-            for path in self.tmp_dir.glob(f"{run_id}*"):
-                path.unlink(missing_ok=True)
+            cleanup_partial_files()
             raise DownloadError(f"Download failed: {exc}") from exc
-
-        if time.monotonic() - start > self.max_seconds:
-            raise DownloadError("Download exceeded MAX_DOWNLOAD_SECONDS.")
 
         if isinstance(info, dict) and "entries" in info:
             entries = [entry for entry in info.get("entries") or [] if entry]

@@ -9,9 +9,6 @@ class ConfigError(ValueError):
     pass
 
 
-SYNOLOGY_HOST_PATH_MESSAGE = "MUSIC_DIR is a container path. Use HOST_MUSIC_DIR=/volume1/... and keep MUSIC_DIR=/music."
-
-
 def parse_user_ids(raw: str | None) -> set[int]:
     if not raw:
         return set()
@@ -69,15 +66,13 @@ class Settings:
         if upload_batch_window_seconds < 0:
             raise ConfigError("UPLOAD_BATCH_WINDOW_SECONDS must be non-negative")
 
-        music_dir = Path(os.environ.get("MUSIC_DIR", "/music"))
-        if str(music_dir).startswith("/volume1"):
-            raise ConfigError(SYNOLOGY_HOST_PATH_MESSAGE)
+        music_dir = Path(os.environ.get("MUSIC_DIR", "./music"))
 
         return cls(
             telegram_bot_token=token,
             allowed_telegram_user_ids=allowed,
             music_dir=music_dir,
-            download_tmp_dir=Path(os.environ.get("DOWNLOAD_TMP_DIR", "/tmp/sync-me-maybe")),
+            download_tmp_dir=Path(os.environ.get("DOWNLOAD_TMP_DIR", "./tmp/sync-me-maybe")),
             ytdlp_cookies_file=Path(cookies) if cookies else None,
             max_download_seconds=max_download_seconds,
             max_collection_tracks=max_collection_tracks,

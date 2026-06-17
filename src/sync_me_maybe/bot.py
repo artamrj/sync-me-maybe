@@ -657,7 +657,7 @@ async def _enqueue_link(
         request_index=1,
         display_title=source_label,
     )
-    position = await runtime.queue.enqueue(job)
+    await runtime.queue.enqueue(job)
     request.job_ids.append(job.id)
     await _safe_edit_status(status_message, await _render_request_text(runtime, request), reply_markup=_request_keyboard(runtime, request))
 
@@ -703,7 +703,7 @@ async def _enqueue_collection(
         request_index=1,
         display_title=source_label,
     )
-    position = await runtime.queue.enqueue(job)
+    await runtime.queue.enqueue(job)
     request.job_ids.append(job.id)
     await _safe_edit_status(status_message, await _render_request_text(runtime, request), reply_markup=_request_keyboard(runtime, request))
 
@@ -1082,9 +1082,7 @@ def main() -> None:
     except PermissionError as exc:
         raise SystemExit(
             "Cannot write to the configured music/temp directory. "
-            "For NAS deployments, set HOST_MUSIC_DIR to the host path, keep MUSIC_DIR=/music, "
-            "set PUID/PGID to a Synology user/group that can write to the mounted folder, "
-            "and check permissions on HOST_MUSIC_DIR and HOST_TMP_DIR. "
+            "Check MUSIC_DIR and DOWNLOAD_TMP_DIR permissions, or set them to writable paths. "
             f"Original error: {exc}"
         ) from exc
     build_application(settings).run_polling(allowed_updates=Update.ALL_TYPES)

@@ -1,3 +1,0 @@
-services:
-  sync-me-maybe:
-    build: .
