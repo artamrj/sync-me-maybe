@@ -7,7 +7,9 @@ from sync_me_maybe.music.urls import ClassifiedLink, LinkScope
 
 
 class CollectionResolveError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class CollectionResolver:
@@ -18,24 +20,25 @@ class CollectionResolver:
 
     async def expand(self, classified: ClassifiedLink) -> list[TrackSearchItem]:
         if classified.scope == LinkScope.TRACK:
-            raise CollectionResolveError("This link is not a playlist or album.")
+            raise CollectionResolveError("This link is not a playlist or album.", retryable=False)
 
         provider = provider_for(classified.kind, self.providers)
         if not provider:
             raise CollectionResolveError(
-                "This provider does not support playlist or album expansion."
+                "This provider does not support playlist or album expansion.", retryable=False
             )
 
         try:
             tracks = await provider.expand_collection(classified)
         except ProviderError as exc:
-            raise CollectionResolveError(str(exc)) from exc
+            raise CollectionResolveError(str(exc), retryable=exc.retryable) from exc
 
         if not tracks:
-            raise CollectionResolveError("No tracks found in this collection.")
+            raise CollectionResolveError("No tracks found in this collection.", retryable=False)
         if len(tracks) > self.settings.max_collection_tracks:
             raise CollectionResolveError(
                 f"Collection has {len(tracks)} tracks, "
-                f"above MAX_COLLECTION_TRACKS={self.settings.max_collection_tracks}."
+                f"above MAX_COLLECTION_TRACKS={self.settings.max_collection_tracks}.",
+                retryable=False,
             )
         return tracks

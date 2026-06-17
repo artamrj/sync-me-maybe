@@ -47,7 +47,9 @@ class ShazamProvider:
         if not query:
             from sync_me_maybe.music.providers.base import ProviderError
 
-            raise ProviderError("Could not build a YouTube Music search query from this link.")
+            raise ProviderError(
+                "Could not build a YouTube Music search query from this link.", retryable=False
+            )
         return ResolvedTrack(
             source_url=link.url,
             download_url=f"ytsearch1:{query}",

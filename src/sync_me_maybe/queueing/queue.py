@@ -48,6 +48,17 @@ class QueuedJob:
     request_total: int | None = None
     request_index: int | None = None
     display_title: str | None = None
+    attempt: int = 1
+    max_attempts: int = 3
+    retry_backoff_seconds: tuple[int, ...] = (30, 120, 600)
+
+
+class RetryJob(RuntimeError):
+    def __init__(self, job: QueuedJob, reason: str, delay_seconds: int) -> None:
+        super().__init__(reason)
+        self.job = job
+        self.reason = reason
+        self.delay_seconds = delay_seconds
 
 
 @dataclass(frozen=True)
@@ -62,6 +73,8 @@ class DownloadQueue:
         self._active: QueuedJob | None = None
         self._condition = asyncio.Condition()
         self._worker: asyncio.Task[None] | None = None
+        self._delayed_retries: dict[str, asyncio.Task[None]] = {}
+        self._delayed_retry_jobs: dict[str, QueuedJob] = {}
 
     async def enqueue(self, job: QueuedJob) -> int:
         async with self._condition:
@@ -94,7 +107,34 @@ class DownloadQueue:
                 else:
                     kept.append(job)
             self._pending = kept
+            for job_id, task in list(self._delayed_retries.items()):
+                delayed_job = self._delayed_retry_jobs.get(job_id)
+                if delayed_job and delayed_job.request_id == request_id:
+                    task.cancel()
+                    self._delayed_retries.pop(job_id, None)
+                    self._delayed_retry_jobs.pop(job_id, None)
+                    removed += 1
             return removed
+
+    def retry_later(self, job: QueuedJob, delay_seconds: int) -> None:
+        async def reenqueue() -> None:
+            try:
+                await asyncio.sleep(delay_seconds)
+                async with self._condition:
+                    self._pending.append(job)
+                    self._condition.notify()
+            except asyncio.CancelledError:
+                raise
+            finally:
+                self._delayed_retries.pop(job.id, None)
+                self._delayed_retry_jobs.pop(job.id, None)
+
+        task = asyncio.create_task(reenqueue())
+        old_task = self._delayed_retries.pop(job.id, None)
+        if old_task:
+            old_task.cancel()
+        self._delayed_retries[job.id] = task
+        self._delayed_retry_jobs[job.id] = job
 
     def start(self, processor: Callable[[QueuedJob], Awaitable[None]]) -> None:
         if self._worker and not self._worker.done():
@@ -105,6 +145,10 @@ class DownloadQueue:
         if not self._worker:
             return
         self._worker.cancel()
+        for task in self._delayed_retries.values():
+            task.cancel()
+        self._delayed_retries.clear()
+        self._delayed_retry_jobs.clear()
         try:
             await self._worker
         except asyncio.CancelledError:
@@ -122,6 +166,16 @@ class DownloadQueue:
 
             try:
                 await processor(job)
+            except RetryJob as exc:
+                self.retry_later(exc.job, exc.delay_seconds)
+                LOGGER.info(
+                    "Retrying queue job %s attempt %s/%s in %ss: %s",
+                    exc.job.source_label,
+                    exc.job.attempt,
+                    exc.job.max_attempts,
+                    exc.delay_seconds,
+                    exc.reason,
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001 - keep queue worker alive after one failed job.

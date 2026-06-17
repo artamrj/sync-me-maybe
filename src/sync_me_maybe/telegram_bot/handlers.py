@@ -12,7 +12,14 @@ from sync_me_maybe.music.collections import CollectionResolveError
 from sync_me_maybe.music.downloader import DownloadError
 from sync_me_maybe.music.resolver import ResolvedTrack, ResolveError
 from sync_me_maybe.music.urls import LinkKind, LinkScope, classify_url, extract_urls
-from sync_me_maybe.queueing.queue import JobKind, QueuedJob
+from sync_me_maybe.queueing.queue import JobKind, QueuedJob, RetryJob
+from sync_me_maybe.queueing.retry import (
+    RetryDecision,
+    next_attempt,
+    retry_decision,
+    retry_delay_seconds,
+    retry_detail,
+)
 from sync_me_maybe.telegram_bot.requests import (
     job_request,
     mark_request_cancelled,
@@ -332,6 +339,8 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
             )
         result = store_completed_file(downloaded.temp_file, destination, runtime.settings.music_dir)
     except (ResolveError, DownloadError) as exc:
+        if await retry_link_job(job, runtime, application, request, source, exc):
+            return
         await update_parent_progress(job, runtime, application, "failed")
         if request:
             if request_cancelled(request) or "Cancelled by user" in str(exc):
@@ -352,6 +361,8 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
             )
         return
     except Exception as exc:  # noqa: BLE001 - keep bot alive and report actionable failure.
+        if await retry_link_job(job, runtime, application, request, source, exc):
+            return
         LOGGER.exception("Link handling failed")
         await update_parent_progress(job, runtime, application, "failed")
         if request:
@@ -425,6 +436,8 @@ async def process_collection_job(
         if request_cancelled(request):
             return
     except CollectionResolveError as exc:
+        if await retry_collection_job(job, runtime, application, request, source, exc):
+            return
         if request:
             request.stage = StatusStage.FAILED
             request.failed += 1
@@ -541,6 +554,71 @@ async def process_collection_job(
             await safe_edit_status(
                 status_message, render_status(StatusStage.QUEUED, source, detail, position=position)
             )
+
+
+async def retry_link_job(
+    job: QueuedJob,
+    runtime: BotRuntime,
+    application: Application,
+    request: RequestState | None,
+    source: str,
+    exc: BaseException,
+) -> bool:
+    decision = retry_decision(job, exc)
+    if decision != RetryDecision.RETRY:
+        return False
+    delay = retry_delay_seconds(job)
+    if delay is None:
+        return False
+    detail = retry_detail(job, delay, str(exc))
+    retry_job = next_attempt(job)
+    if request:
+        request.stage = StatusStage.QUEUED
+        request.current = job.display_title or job.source_label
+        request.detail = detail
+        await update_request(runtime, application, request)
+    else:
+        await safe_edit_message(
+            application.bot,
+            job.chat_id,
+            job.status_message_id,
+            render_status(StatusStage.QUEUED, source, detail),
+        )
+    raise RetryJob(retry_job, str(exc), delay)
+
+
+async def retry_collection_job(
+    job: QueuedJob,
+    runtime: BotRuntime,
+    application: Application,
+    request: RequestState | None,
+    source: str,
+    exc: BaseException,
+) -> bool:
+    decision = retry_decision(job, exc)
+    if decision != RetryDecision.RETRY:
+        return False
+    delay = retry_delay_seconds(job)
+    if delay is None:
+        return False
+    detail = retry_detail(job, delay, str(exc))
+    retry_job = next_attempt(job)
+    if request:
+        request.stage = StatusStage.QUEUED
+        request.current = job.display_title or source
+        request.detail = detail
+        await update_request(runtime, application, request)
+    else:
+        await safe_edit_message(
+            application.bot,
+            job.chat_id,
+            job.status_message_id,
+            render_status(StatusStage.QUEUED, source, detail),
+            reply_markup=status_keyboard(
+                source_url=job.classified_link.url if job.classified_link else None
+            ),
+        )
+    raise RetryJob(retry_job, str(exc), delay)
 
 
 async def update_parent_progress(

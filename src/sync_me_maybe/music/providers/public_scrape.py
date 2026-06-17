@@ -8,7 +8,7 @@ import yt_dlp
 from bs4 import BeautifulSoup
 
 from sync_me_maybe.music.filenames import clean_title
-from sync_me_maybe.music.providers.base import TrackSearchItem
+from sync_me_maybe.music.providers.base import ProviderError, TrackSearchItem
 from sync_me_maybe.music.providers.common import int_or_none
 
 
@@ -43,8 +43,10 @@ class PublicCollectionScraper:
                 url, timeout=self.timeout_seconds, headers={"User-Agent": "Mozilla/5.0"}
             )
             response.raise_for_status()
-        except requests.RequestException:
-            return []
+        except requests.RequestException as exc:
+            raise ProviderError(
+                f"Could not fetch public collection metadata: {exc}", retryable=True
+            ) from exc
 
         soup = BeautifulSoup(response.text, "html.parser")
         json_roots: list[Any] = []

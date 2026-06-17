@@ -11,7 +11,14 @@ from telegram.ext import Application
 
 from sync_me_maybe.library.storage import store_completed_file, upload_destination
 from sync_me_maybe.music.downloader import DownloadError
-from sync_me_maybe.queueing.queue import JobKind, QueuedJob, UploadPayload
+from sync_me_maybe.queueing.queue import JobKind, QueuedJob, RetryJob, UploadPayload
+from sync_me_maybe.queueing.retry import (
+    RetryDecision,
+    next_attempt,
+    retry_decision,
+    retry_delay_seconds,
+    retry_detail,
+)
 from sync_me_maybe.telegram_bot.requests import (
     job_request,
     mark_request_cancelled,
@@ -285,6 +292,8 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
         result = store_completed_file(temp_path, destination, runtime.settings.music_dir)
     except Exception as exc:  # noqa: BLE001 - Telegram file APIs raise several exception types.
         temp_path.unlink(missing_ok=True)
+        if await retry_upload_job(job, runtime, application, request, filename, exc):
+            return
         LOGGER.exception("Upload handling failed")
         if request:
             if request_cancelled(request):
@@ -332,3 +341,34 @@ def audio_document_filename(update: Update) -> str | None:
     if mime_type.startswith("audio/") or suffix in AUDIO_EXTENSIONS:
         return filename
     return None
+
+
+async def retry_upload_job(
+    job: QueuedJob,
+    runtime: BotRuntime,
+    application: Application,
+    request: RequestState | None,
+    filename: str,
+    exc: BaseException,
+) -> bool:
+    decision = retry_decision(job, exc)
+    if decision != RetryDecision.RETRY:
+        return False
+    delay = retry_delay_seconds(job)
+    if delay is None:
+        return False
+    detail = retry_detail(job, delay, str(exc))
+    retry_job = next_attempt(job)
+    if request:
+        request.stage = StatusStage.QUEUED
+        request.current = filename
+        request.detail = detail
+        await update_request(runtime, application, request)
+    else:
+        await safe_edit_message(
+            application.bot,
+            job.chat_id,
+            job.status_message_id,
+            render_status(StatusStage.QUEUED, "Telegram upload", detail),
+        )
+    raise RetryJob(retry_job, str(exc), delay)

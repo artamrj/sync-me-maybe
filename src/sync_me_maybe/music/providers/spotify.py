@@ -50,7 +50,9 @@ class SpotifyProvider:
                 link.url, slug_query(link.url)
             )
         if not query:
-            raise ProviderError("Could not build a YouTube Music search query from this link.")
+            raise ProviderError(
+                "Could not build a YouTube Music search query from this link.", retryable=False
+            )
         return ResolvedTrack(
             source_url=link.url,
             download_url=f"ytsearch1:{query}",
@@ -65,7 +67,8 @@ class SpotifyProvider:
         if not tracks:
             raise ProviderError(
                 "Could not expand this Spotify collection. "
-                "Public extraction did not expose track data."
+                "Public extraction did not expose track data.",
+                retryable=False,
             )
         return tracks
 
@@ -108,7 +111,7 @@ class SpotifyProvider:
             )
             response.raise_for_status()
         except requests.RequestException as exc:
-            raise ProviderError(f"Could not fetch link metadata: {exc}") from exc
+            raise ProviderError(f"Could not fetch link metadata: {exc}", retryable=True) from exc
 
         soup = BeautifulSoup(response.text, "html.parser")
         title = _meta(soup, "og:title") or (soup.title.string if soup.title else None)

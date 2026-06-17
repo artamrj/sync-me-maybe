@@ -58,7 +58,7 @@ class YouTubeProvider:
             with yt_dlp.YoutubeDL(options) as ydl:
                 info = ydl.extract_info(url, download=False)
         except Exception as exc:  # noqa: BLE001 - yt-dlp has many concrete error types.
-            raise ProviderError(f"Could not read YouTube playlist: {exc}") from exc
+            raise ProviderError(f"Could not read YouTube playlist: {exc}", retryable=True) from exc
 
         tracks: list[TrackSearchItem] = []
         for index, entry in enumerate((info or {}).get("entries") or [], start=1):

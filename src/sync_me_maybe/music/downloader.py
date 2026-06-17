@@ -18,7 +18,9 @@ from .resolver import ResolvedTrack
 
 
 class DownloadError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 @dataclass(frozen=True)
@@ -54,11 +56,11 @@ class YtDlpDownloader:
 
         def check_cancel() -> None:
             if cancel_check and cancel_check():
-                raise DownloadError("Cancelled by user.")
+                raise DownloadError("Cancelled by user.", retryable=False)
 
         def check_timeout() -> None:
             if time.monotonic() - start > self.max_seconds:
-                raise DownloadError("Download exceeded MAX_DOWNLOAD_SECONDS.")
+                raise DownloadError("Download exceeded MAX_DOWNLOAD_SECONDS.", retryable=True)
 
         def progress_hook(_: dict[str, Any]) -> None:
             check_cancel()
@@ -95,19 +97,21 @@ class YtDlpDownloader:
             raise
         except Exception as exc:  # noqa: BLE001 - yt-dlp raises many concrete exception types.
             cleanup_partial_files()
-            raise DownloadError(f"Download failed: {exc}") from exc
+            raise DownloadError(f"Download failed: {exc}", retryable=True) from exc
 
         if isinstance(info, dict) and "entries" in info:
             entries = [entry for entry in info.get("entries") or [] if entry]
             if not entries:
-                raise DownloadError("No matching YouTube Music result found.")
+                raise DownloadError("No matching YouTube Music result found.", retryable=False)
             info = entries[0]
 
         temp_file = self.tmp_dir / f"{run_id}.mp3"
         if not temp_file.exists():
             matches = list(self.tmp_dir.glob(f"{run_id}.*"))
             if not matches:
-                raise DownloadError("Download completed but no output file was produced.")
+                raise DownloadError(
+                    "Download completed but no output file was produced.", retryable=False
+                )
             temp_file = matches[0]
 
         return DownloadedTrack(temp_file=temp_file, info=_track_info(info, resolved))

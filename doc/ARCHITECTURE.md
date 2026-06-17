@@ -441,6 +441,10 @@ Main names:
 - Parent collection progress metadata.
 - Aggregate request metadata.
 - Display title.
+- Retry metadata:
+  - current attempt
+  - maximum attempts
+  - retry backoff seconds
 
 `DownloadQueue` implementation:
 
@@ -449,6 +453,7 @@ Main names:
 - Has one background worker task.
 - Processes exactly one job at a time.
 - Keeps an `_active` job for status and queue position.
+- Tracks delayed retry tasks for jobs waiting on backoff.
 - Catches unexpected job exceptions so the worker survives individual failures.
 
 Queue operations:
@@ -456,11 +461,12 @@ Queue operations:
 - `enqueue(job) -> int`: append pending job and return queue position.
 - `snapshot() -> QueueSnapshot`: read active and pending jobs.
 - `position_of(job_id) -> int | None`: find active or pending position.
-- `cancel_request(request_id) -> int`: remove pending jobs belonging to a request.
+- `cancel_request(request_id) -> int`: remove pending and delayed retry jobs belonging to a request.
+- `retry_later(job, delay_seconds)`: re-enqueue a job after retry backoff.
 - `start(processor)`: start the worker.
 - `stop()`: cancel the worker at shutdown.
 
-The queue is not persisted. It is lost on restart.
+The queue and delayed retries are not persisted. They are lost on restart.
 
 ## 6. Music Layer
 
@@ -1034,17 +1040,28 @@ Telegram API errors:
 Resolver errors:
 
 - `ResolveError` for single-link metadata/query failures.
+- Retryable resolver errors preserve a retryable flag from provider failures.
 - Rendered as failed request state.
 
 Collection errors:
 
 - `CollectionResolveError` for unsupported or unexpandable collections.
+- Retryable collection errors preserve a retryable flag from provider failures.
 - Rendered as failed request state.
 
 Download errors:
 
 - `DownloadError` for `yt-dlp`, timeout, missing result, and cancellation failures.
+- Temporary `yt-dlp` and timeout errors are retryable.
+- Missing search results, missing output files, unsupported inputs, and cancellation are not retryable.
 - Partial files are cleaned up.
+
+Per-job retry behavior:
+
+- Retryable failures are retried up to three attempts.
+- Backoff delays are 30 seconds, 2 minutes, and 10 minutes.
+- Request failure counters are updated only after the final failed attempt.
+- Cancelled jobs and permanent failures are not retried.
 
 Unexpected job errors:
 

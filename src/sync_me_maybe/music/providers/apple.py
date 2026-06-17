@@ -33,7 +33,9 @@ class AppleMusicProvider:
     async def resolve_track(self, link: ClassifiedLink) -> ResolvedTrack:
         query = self._apple_music_query(link.url)
         if not query:
-            raise ProviderError("Could not build a YouTube Music search query from this link.")
+            raise ProviderError(
+                "Could not build a YouTube Music search query from this link.", retryable=False
+            )
         return ResolvedTrack(
             source_url=link.url,
             download_url=f"ytsearch1:{query}",
@@ -49,7 +51,8 @@ class AppleMusicProvider:
         if not tracks:
             raise ProviderError(
                 "Could not expand this Apple Music collection. "
-                "Public extraction did not expose track data."
+                "Public extraction did not expose track data.",
+                retryable=False,
             )
         return tracks
 

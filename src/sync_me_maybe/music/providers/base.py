@@ -31,11 +31,14 @@ class TrackSearchItem:
 
 
 class ProviderError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class UnsupportedProviderCapability(ProviderError):
-    pass
+    def __init__(self, message: str) -> None:
+        super().__init__(message, retryable=False)
 
 
 class Provider(Protocol):

@@ -6,7 +6,9 @@ from sync_me_maybe.music.urls import ClassifiedLink
 
 
 class ResolveError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class LinkResolver:
@@ -17,9 +19,9 @@ class LinkResolver:
     async def resolve(self, classified: ClassifiedLink) -> ResolvedTrack:
         provider = provider_for(classified.kind, self.providers)
         if not provider:
-            raise ResolveError(classified.reason or "Unsupported link.")
+            raise ResolveError(classified.reason or "Unsupported link.", retryable=False)
 
         try:
             return await provider.resolve_track(classified)
         except ProviderError as exc:
-            raise ResolveError(str(exc)) from exc
+            raise ResolveError(str(exc), retryable=exc.retryable) from exc
