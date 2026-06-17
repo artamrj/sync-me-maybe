@@ -81,9 +81,8 @@ Use writable host folders owned by the configured UID/GID. The app sets `MUSIC_D
 
 Tags:
 
-- `latest`: latest successful build from `main`.
-- `sha-<commit>`: immutable commit image for rollback or pinned deployments.
-- `vX.Y.Z`, `X.Y.Z`, and `X.Y`: release tags when pushing version tags.
+- `latest`: latest image published by the release pipeline.
+- `<project version>`: exact version from `pyproject.toml`, without a `v` prefix.
 
 ## Environment Variables
 
