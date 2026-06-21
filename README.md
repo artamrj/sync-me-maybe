@@ -23,7 +23,7 @@ Spotify, Apple Music, and Shazam links are used as search inputs. The bot does n
 - Playlist and album links are expanded into individual track jobs, capped by `MAX_COLLECTION_TRACKS`.
 - Playlist and album downloads are stored under `Owner - Collection Name` folders when provider metadata exposes a real owner. If the owner is missing or looks like a URL, the folder falls back to `Collection Name(<collection URL>)`.
 - Finished Telegram requests with failed jobs show a `Rerun failed` button that queues only the failed items again.
-- Telegram progress messages show the playlist or album name as the headline when known, source platform/type, owner when available, compact saved/skipped/failed/left counters, queue state, and the active track or item. Final statuses stay compact; paths and issue details are available through buttons when applicable.
+- Telegram status messages follow a clear `Received -> Preparing -> Queued -> Downloading -> Completed` lifecycle, use source-specific icons, show playlist/album title and owner when known, and keep final statuses compact. Paths and issue details are available through buttons when applicable.
 
 ## Setup
 
@@ -37,6 +37,7 @@ DOWNLOAD_TMP_DIR=./tmp/sync-me-maybe
 MAX_DOWNLOAD_SECONDS=900
 MAX_COLLECTION_TRACKS=1000
 UPLOAD_BATCH_WINDOW_SECONDS=2
+RECEIVED_STICKER_ID=
 LOG_LEVEL=INFO
 ```
 
@@ -100,6 +101,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history and versioning notes.
 - `MAX_DOWNLOAD_SECONDS`: maximum download duration before a job fails. Defaults to `900`.
 - `MAX_COLLECTION_TRACKS`: maximum playlist or album tracks to enqueue. Defaults to `1000`.
 - `UPLOAD_BATCH_WINDOW_SECONDS`: seconds to group quickly forwarded audio uploads. Defaults to `2`; set `0` to disable batching.
+- `RECEIVED_STICKER_ID`: optional Telegram sticker file ID sent after an instant `Received` acknowledgement.
 - `LOG_LEVEL`: Python logging level. Defaults to `INFO`.
 
 ## Bot Commands
@@ -110,7 +112,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history and versioning notes.
 - `/health`: verify the bot can write to the music directory.
 - `/queue`: show the active download and pending queue.
 
-Incoming links and uploads are added to a global in-memory queue. The bot replies directly to the original file or link, shows the queue position, and edits that same status reply as the item moves through resolving, downloading, saving, and completion.
+Incoming links and uploads are added to a global in-memory queue. The bot replies directly to the original file or link with `Received`, optionally sends the configured received sticker, and edits that same status reply as the item moves through preparing, queued, downloading, and completed states. The queued state is shown only when another job is ahead.
 
 If a message contains multiple links, each supported link becomes its own queue item and unsupported links are reported individually.
 

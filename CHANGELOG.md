@@ -7,10 +7,22 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+## 0.10.0 - 2026-06-22
+
+### Added
+
+- Added a Telegram status lifecycle with instant `Received`, source-specific icons, optional
+  `RECEIVED_STICKER_ID` acknowledgement stickers, queue-position messaging, and best-effort
+  remaining time estimates.
+
 ### Changed
 
 - Improved Telegram status text so collection names become the headline, source platform/type is
   shown separately, and active collection tracks use real metadata instead of index-only labels.
+- Redesigned Telegram aggregate status messages around `Received -> Preparing -> Queued ->
+  Downloading -> Completed`, with compact final summaries and no generic `Source:` or
+  `Queue: active` lines.
+- Bumped `pyproject.toml`, `uv.lock`, and package `__version__` from `0.9.6` to `0.10.0`.
 
 ## 0.9.6 - 2026-06-21
 

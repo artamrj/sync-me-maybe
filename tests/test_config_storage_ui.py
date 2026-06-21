@@ -53,6 +53,7 @@ def test_settings_from_env_validates_required_and_numeric_values(
     monkeypatch.setenv("MAX_DOWNLOAD_SECONDS", "15")
     monkeypatch.setenv("MAX_COLLECTION_TRACKS", "7")
     monkeypatch.setenv("UPLOAD_BATCH_WINDOW_SECONDS", "0.5")
+    monkeypatch.setenv("RECEIVED_STICKER_ID", "sticker-id")
     monkeypatch.setenv("LOG_LEVEL", "debug")
     settings = Settings.from_env()
     assert settings.telegram_bot_token == "token"
@@ -60,6 +61,7 @@ def test_settings_from_env_validates_required_and_numeric_values(
     assert settings.max_download_seconds == 15
     assert settings.max_collection_tracks == 7
     assert settings.upload_batch_window_seconds == 0.5
+    assert settings.received_sticker_id == "sticker-id"
     assert settings.log_level == "DEBUG"
 
     monkeypatch.delenv("MAX_COLLECTION_TRACKS")
@@ -148,11 +150,23 @@ def test_store_completed_file_moves_or_skips_duplicate(tmp_path: Path) -> None:
 
 def test_ui_renderers_and_keyboards_show_expected_status() -> None:
     assert progress_bar(1, 4, width=4) == "█░░░ 25%"
+    assert progress_bar(13, 20, width=10, show_count=True) == "██████░░░░ 65%  • 13/20"
     assert progress_bar(0, 0, width=3) == "░░░ 0%"
     assert "Queue: #2" in render_status(StatusStage.QUEUED, "spotify", "detail", position=2)
     assert "Path: Artist/Song.mp3" in render_success("Artist/Song.mp3")
     assert "Failed" in render_error("broken")
-    assert "2 left" in render_collection_progress("playlist", total=2, queued=2)
+    assert "📥 0 saved • ⏭️ 0 skipped • ❌ 0 failed" in render_collection_progress(
+        "playlist", total=2, queued=2
+    )
+
+    received = render_request(
+        RequestView(
+            title="Spotify playlist",
+            stage=StatusStage.RECEIVED,
+            source_label="Spotify playlist",
+        )
+    )
+    assert received == "📥 Received\n🎵 Spotify playlist"
 
     request_text = render_request(
         RequestView(
@@ -168,6 +182,8 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
     assert "stored/skipped path" not in request_text
     assert "a.mp3" not in request_text
     assert "Now:" not in request_text
+    assert "Track:" not in request_text
+    assert "Queue:" not in request_text
 
     active_playlist = render_request(
         RequestView(
@@ -176,37 +192,53 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
             total=4,
             completed=1,
             current="Mumford & Sons - White Blank Page",
-            queue_position=0,
             collection_title="femme",
             collection_owner="Valeria Gershannik",
             source_label="Spotify playlist",
+            elapsed_seconds=60,
         )
     )
     assert "⬇️ Downloading ·" not in active_playlist
-    assert "🎧 femme" in active_playlist
+    assert "🔵 Status     Downloading" in active_playlist
+    assert "🎵 Spotify playlist “femme” by Valeria Gershannik" in active_playlist
     assert "🎧 Spotify playlist" not in active_playlist
-    assert "Source: Spotify playlist" in active_playlist
+    assert "Source:" not in active_playlist
     assert "Playlist name:" not in active_playlist
     assert "Album name:" not in active_playlist
     assert "Playlist: femme" not in active_playlist
-    assert "By: Valeria Gershannik" in active_playlist
-    assert "██░░░░░░░░ 25%" in active_playlist
-    assert "\n\n✅ 1 saved" in active_playlist
-    assert "✅ 1 saved" in active_playlist
-    assert "⏳ 3 left" in active_playlist
-    assert "Queue: active" in active_playlist
+    assert "By:" not in active_playlist
+    assert "██░░░░░░░░ 25%  • 1/4" in active_playlist
+    assert "⏳ ~3m 0s remaining" in active_playlist
+    assert "📥 1 saved • ⏭️ 0 skipped • ❌ 0 failed" in active_playlist
+    assert "Queue: active" not in active_playlist
     assert "Track: Mumford & Sons - White Blank Page" in active_playlist
+
+    queued_playlist = render_request(
+        RequestView(
+            title="Spotify playlist",
+            stage=StatusStage.QUEUED,
+            total=50,
+            queue_position=2,
+            collection_title="feels",
+            collection_owner="Romy Brunner",
+            source_label="Spotify playlist",
+        )
+    )
+    assert "🟡 Status     Queued" in queued_playlist
+    assert "🎵 Spotify playlist “feels” by Romy Brunner" in queued_playlist
+    assert "⏳ Waiting in queue · position #2" in queued_playlist
+    assert "📦 50 tracks detected" in queued_playlist
 
     active_album = render_request(
         RequestView(
             title="Apple Music album",
-            stage=StatusStage.QUEUED,
+            stage=StatusStage.THINKING,
             collection_title="Album",
             source_label="Apple Music album",
         )
     )
-    assert "🎧 Album" in active_album
-    assert "Source: Apple Music album" in active_album
+    assert "🍏 Apple Music album “Album”" in active_album
+    assert "Source:" not in active_album
     assert "Album name:" not in active_album
 
     missing_title_playlist = render_request(
@@ -217,8 +249,8 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
             queue_position=0,
         )
     )
-    assert "🎧 Playlist" in missing_title_playlist
-    assert "Source: Spotify playlist" in missing_title_playlist
+    assert "🎵 Spotify playlist" in missing_title_playlist
+    assert "Source:" not in missing_title_playlist
     assert "Track:" not in missing_title_playlist
     assert "Queue:" not in missing_title_playlist
 
@@ -230,14 +262,16 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
             source_label="Spotify playlist",
         )
     )
-    assert "🧩 Finding tracks..." in title_only_playlist
-    assert "🎧 femme" in title_only_playlist
+    assert "🟣 Status     Preparing" in title_only_playlist
+    assert "🎵 Spotify playlist “femme”" in title_only_playlist
+    assert "🔍 Reading playlist..." in title_only_playlist
     assert "Playlist name:" not in title_only_playlist
     assert "By:" not in title_only_playlist
 
     upload_request = render_request(
         RequestView(title="Telegram upload", stage=StatusStage.DOWNLOADING, current="song.mp3")
     )
+    assert "📁 File “song.mp3”" in upload_request
     assert "Item: song.mp3" in upload_request
 
     keyboard = status_keyboard(

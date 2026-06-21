@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -41,6 +42,7 @@ from sync_me_maybe.telegram_bot.safe_api import (
     safe_chat_action,
     safe_edit_message,
     safe_edit_status,
+    safe_send_sticker,
 )
 from sync_me_maybe.ui.messages import (
     RequestView,
@@ -114,7 +116,7 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
         request_id = uuid4().hex
         status_message = await message.reply_text(
             render_request(
-                RequestView(title="Telegram upload", stage=StatusStage.QUEUED, current=filename)
+                RequestView(title="Telegram upload", stage=StatusStage.RECEIVED, current=filename)
             ),
             reply_to_message_id=message.message_id,
             allow_sending_without_reply=True,
@@ -126,7 +128,9 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
             title="Telegram upload",
             total=1,
             current=filename,
+            stage=StatusStage.RECEIVED,
         )
+        await send_received_sticker(runtime, application, message.chat_id, message.message_id)
         runtime.requests[request_id] = request
         batch = UploadBatch(
             key=key,
@@ -181,6 +185,7 @@ async def enqueue_upload_batch(
         job = upload_job_from_buffered(buffered, batch.request, index, len(batch.uploads))
         await runtime.queue.enqueue(job)
         batch.request.job_ids.append(job.id)
+    batch.request.stage = StatusStage.QUEUED
     await update_request(runtime, application, batch.request)
 
 
@@ -200,7 +205,7 @@ async def enqueue_upload_request(
         text=render_request(
             RequestView(
                 title="Telegram upload" if len(uploads) == 1 else "Telegram uploads",
-                stage=StatusStage.QUEUED,
+                stage=StatusStage.RECEIVED,
                 current=first.payload.filename,
                 total=len(uploads),
             )
@@ -215,12 +220,21 @@ async def enqueue_upload_request(
         title="Telegram upload" if len(uploads) == 1 else "Telegram uploads",
         total=len(uploads),
         current=first.payload.filename,
+        stage=StatusStage.RECEIVED,
+    )
+    await safe_send_sticker(
+        application.bot,
+        chat_id,
+        runtime.settings.received_sticker_id,
+        reply_to_message_id=original_message_id,
+        allow_sending_without_reply=True,
     )
     runtime.requests[request_id] = request
     for index, buffered in enumerate(uploads, start=1):
         job = upload_job_from_buffered(buffered, request, index, len(uploads))
         await runtime.queue.enqueue(job)
         request.job_ids.append(job.id)
+    request.stage = StatusStage.QUEUED
     await safe_edit_status(
         status_message,
         await render_request_text(runtime, request),
@@ -248,6 +262,19 @@ def upload_job_from_buffered(
     )
 
 
+async def send_received_sticker(
+    runtime: BotRuntime, application: Application, chat_id: int, reply_to_message_id: int
+) -> None:
+    """Send the optional received sticker configured for instant acknowledgements."""
+    await safe_send_sticker(
+        application.bot,
+        chat_id,
+        runtime.settings.received_sticker_id,
+        reply_to_message_id=reply_to_message_id,
+        allow_sending_without_reply=True,
+    )
+
+
 async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: Application) -> None:
     """Download one Telegram-uploaded file and store it in the music directory."""
     bot = application.bot
@@ -258,6 +285,7 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
         return
     if request:
         request.stage = StatusStage.DOWNLOADING
+        request.download_started_at = request.download_started_at or datetime.now(UTC)
         request.current = filename
         request.detail = None
         await update_request(runtime, application, request)
@@ -377,6 +405,7 @@ def set_upload_request_stage(request: RequestState) -> None:
     if done < request.total:
         request.stage = StatusStage.QUEUED
         return
+    request.download_started_at = None
     if request.failed and not request.completed and not request.skipped:
         request.stage = StatusStage.FAILED
         return

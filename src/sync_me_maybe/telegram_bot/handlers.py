@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from telegram import Update
@@ -45,6 +46,7 @@ from sync_me_maybe.telegram_bot.safe_api import (
     safe_edit_message,
     safe_edit_status,
     safe_send_message,
+    safe_send_sticker,
 )
 from sync_me_maybe.telegram_bot.uploads import audio_document_filename, buffer_upload
 from sync_me_maybe.ui.messages import (
@@ -125,14 +127,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if len(classified_links) == 1 and not unsupported:
         index, classified = classified_links[0]
         if classified.scope == LinkScope.TRACK:
-            await enqueue_link(update, runtime, classified, link_index=index, link_total=len(urls))
+            await enqueue_link(
+                update,
+                runtime,
+                context.application,
+                classified,
+                link_index=index,
+                link_total=len(urls),
+            )
         else:
             await enqueue_collection(
-                update, runtime, classified, link_index=index, link_total=len(urls)
+                update,
+                runtime,
+                context.application,
+                classified,
+                link_index=index,
+                link_total=len(urls),
             )
         return
 
-    await enqueue_link_batch(update, runtime, classified_links, unsupported, link_total=len(urls))
+    await enqueue_link_batch(
+        update, runtime, context.application, classified_links, unsupported, link_total=len(urls)
+    )
 
 
 async def buffer_link_request(
@@ -161,7 +177,7 @@ async def buffer_link_request(
             render_request(
                 RequestView(
                     title=title,
-                    stage=StatusStage.QUEUED,
+                    stage=StatusStage.RECEIVED,
                     total=len(buffered_links) + len(unsupported),
                     failed=len(unsupported),
                     detail=detail,
@@ -181,7 +197,9 @@ async def buffer_link_request(
             detail=detail,
             source_urls=[link.classified_link.url for link in buffered_links],
             source_label=batch_source_label(buffered_links, unsupported),
+            stage=StatusStage.RECEIVED,
         )
+        await send_received_sticker(runtime, application, message.chat_id, message.message_id)
         add_unsupported_details(request, unsupported)
         runtime.requests[request_id] = request
         batch = LinkBatch(key=key, request=request, links=buffered_links, unsupported=unsupported)
@@ -230,6 +248,7 @@ async def enqueue_buffered_link_batch(
     batch.request.current = f"{len(batch.links)} link(s) queued"
     batch.request.detail = "\n".join(batch.unsupported) if batch.unsupported else None
     batch.request.source_label = batch_source_label(batch.links, batch.unsupported)
+    batch.request.stage = StatusStage.QUEUED
     add_unsupported_details(batch.request, batch.unsupported)
     for request_index, buffered in enumerate(batch.links, start=1):
         classified = buffered.classified_link
@@ -306,6 +325,19 @@ def job_track_label(job: QueuedJob, resolved: object | None = None) -> str:
     )
 
 
+async def send_received_sticker(
+    runtime: BotRuntime, application: Application, chat_id: int, reply_to_message_id: int
+) -> None:
+    """Send the optional received sticker configured for instant acknowledgements."""
+    await safe_send_sticker(
+        application.bot,
+        chat_id,
+        runtime.settings.received_sticker_id,
+        reply_to_message_id=reply_to_message_id,
+        allow_sending_without_reply=True,
+    )
+
+
 def add_unsupported_details(request: RequestState, unsupported: list[str]) -> None:
     """Record unsupported links as failed issue details once per reason."""
     known = {
@@ -352,6 +384,7 @@ def add_link_issue_detail(
 async def enqueue_link(
     update: Update,
     runtime: BotRuntime,
+    application: Application,
     classified,
     link_index: int = 1,
     link_total: int = 1,
@@ -366,7 +399,7 @@ async def enqueue_link(
         render_request(
             RequestView(
                 title=title,
-                stage=StatusStage.QUEUED,
+                stage=StatusStage.RECEIVED,
                 current=detail,
                 source_label=source_display(classified),
             )
@@ -385,7 +418,9 @@ async def enqueue_link(
         current=detail,
         source_urls=[classified.url],
         source_label=source_display(classified),
+        stage=StatusStage.RECEIVED,
     )
+    await send_received_sticker(runtime, application, message.chat_id, message.message_id)
     runtime.requests[request_id] = request
     source_label = (
         classified.kind.value
@@ -408,6 +443,7 @@ async def enqueue_link(
     )
     await runtime.queue.enqueue(job)
     request.job_ids.append(job.id)
+    request.stage = StatusStage.QUEUED
     await safe_edit_status(
         status_message,
         await render_request_text(runtime, request),
@@ -418,6 +454,7 @@ async def enqueue_link(
 async def enqueue_collection(
     update: Update,
     runtime: BotRuntime,
+    application: Application,
     classified,
     link_index: int = 1,
     link_total: int = 1,
@@ -432,7 +469,7 @@ async def enqueue_collection(
         render_request(
             RequestView(
                 title=source,
-                stage=StatusStage.QUEUED,
+                stage=StatusStage.RECEIVED,
                 current=detail,
                 source_label=source_display(classified),
             )
@@ -449,7 +486,9 @@ async def enqueue_collection(
         current=detail,
         source_urls=[classified.url],
         source_label=source_display(classified),
+        stage=StatusStage.RECEIVED,
     )
+    await send_received_sticker(runtime, application, message.chat_id, message.message_id)
     runtime.requests[request_id] = request
     source_label = source if link_total == 1 else f"{source} link {link_index}/{link_total}"
     job = QueuedJob(
@@ -468,6 +507,7 @@ async def enqueue_collection(
     )
     await runtime.queue.enqueue(job)
     request.job_ids.append(job.id)
+    request.stage = StatusStage.QUEUED
     await safe_edit_status(
         status_message,
         await render_request_text(runtime, request),
@@ -476,7 +516,12 @@ async def enqueue_collection(
 
 
 async def enqueue_link_batch(
-    update: Update, runtime: BotRuntime, classified_links, unsupported: list[str], link_total: int
+    update: Update,
+    runtime: BotRuntime,
+    application: Application,
+    classified_links,
+    unsupported: list[str],
+    link_total: int,
 ) -> None:
     """Create one aggregate request for a message containing multiple links."""
     message = update.effective_message
@@ -488,7 +533,7 @@ async def enqueue_link_batch(
         render_request(
             RequestView(
                 title=title,
-                stage=StatusStage.QUEUED,
+                stage=StatusStage.RECEIVED,
                 total=link_total,
                 failed=len(unsupported),
                 detail=detail,
@@ -516,7 +561,9 @@ async def enqueue_link_batch(
             if len(classified_links) == 1 and not unsupported
             else None
         ),
+        stage=StatusStage.RECEIVED,
     )
+    await send_received_sticker(runtime, application, message.chat_id, message.message_id)
     add_unsupported_details(request, unsupported)
     runtime.requests[request_id] = request
 
@@ -546,6 +593,7 @@ async def enqueue_link_batch(
         await runtime.queue.enqueue(job)
         request.job_ids.append(job.id)
 
+    request.stage = StatusStage.QUEUED
     await safe_edit_status(
         status_message,
         await render_request_text(runtime, request),
@@ -591,6 +639,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         await safe_chat_action(bot, job.chat_id, ChatAction.UPLOAD_DOCUMENT)
         if request:
             request.stage = StatusStage.DOWNLOADING
+            request.download_started_at = request.download_started_at or datetime.now(UTC)
             request.current = track_label(resolved) or "Direct YouTube Music link."
             request.detail = None
             await update_request(runtime, application, request)
@@ -698,6 +747,8 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         request.paths.append(result.relative_path)
         done = request.completed + request.skipped + request.failed
         request.stage = StatusStage.DONE if done >= request.total else StatusStage.QUEUED
+        if done >= request.total:
+            request.download_started_at = None
         request.current = (
             None if done >= request.total else track_label(resolved) or result.relative_path
         )

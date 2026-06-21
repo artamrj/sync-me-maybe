@@ -11,12 +11,13 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 class StatusStage(StrEnum):
     """Status labels shown in Telegram messages."""
 
-    QUEUED = "⏳ Queued"
-    THINKING = "🧠 Preparing"
-    DOWNLOADING = "⬇️ Downloading"
-    SAVING = "💾 Saving"
-    EXPANDING = "🧩 Expanding"
-    DONE = "✅ Done"
+    RECEIVED = "📥 Received"
+    QUEUED = "🟡 Status     Queued"
+    THINKING = "🟣 Status     Preparing"
+    DOWNLOADING = "🔵 Status     Downloading"
+    SAVING = "🔵 Status     Saving"
+    EXPANDING = "🟣 Status     Preparing"
+    DONE = "🟢 Status     Completed"
     SKIPPED = "⏭️ Skipped"
     FAILED = "❌ Failed"
     CANCELLED = "⛔ Cancelled"
@@ -39,6 +40,7 @@ class RequestView:
     collection_title: str | None = None
     collection_owner: str | None = None
     source_label: str | None = None
+    elapsed_seconds: int | None = None
 
 
 def render_welcome(authorized: bool) -> str:
@@ -118,83 +120,193 @@ def render_collection_progress(
     return "\n".join(lines)
 
 
-def progress_bar(done: int, total: int, width: int = 10) -> str:
+def progress_bar(done: int, total: int, width: int = 10, *, show_count: bool = False) -> str:
     """Render a fixed-width text progress bar."""
     if total <= 0:
-        return "░" * width + " 0%"
+        bar = "░" * width + " 0%"
+        return f"{bar}  • 0/0" if show_count else bar
     ratio = max(0.0, min(1.0, done / total))
     filled = round(ratio * width)
     percent = round(ratio * 100)
-    return f"{'█' * filled}{'░' * (width - filled)} {percent}%"
+    bar = f"{'█' * filled}{'░' * (width - filled)} {percent}%"
+    return f"{bar}  • {done}/{total}" if show_count else bar
 
 
 def render_counters(total: int, completed: int, skipped: int, failed: int) -> str:
     """Render stored/skipped/failed/waiting counters."""
-    waiting = max(total - completed - skipped - failed, 0)
-    return f"✅ {completed} saved  ⏭️ {skipped} skipped  ❌ {failed} failed  ⏳ {waiting} left"
+    return f"📥 {completed} saved • ⏭️ {skipped} skipped • ❌ {failed} failed"
 
 
 def render_request(view: RequestView) -> str:
     """Render the aggregate request status used for batches and collections."""
     done = view.completed + view.skipped + view.failed
-    lines = [
-        f"🎧 {_display_title(view)}",
-        _status_line(view),
-        "",
-    ]
-    if view.source_label:
-        lines.append(f"Source: {view.source_label}")
-    if view.collection_owner:
-        lines.append(f"By: {view.collection_owner}")
-    if len(lines) > 3:
-        lines.append("")
-    lines.extend(
-        [
-            progress_bar(done, view.total),
-            "",
-            render_counters(view.total, view.completed, view.skipped, view.failed),
-        ]
-    )
-    if view.queue_position is not None and view.stage not in {
-        StatusStage.DONE,
-        StatusStage.SKIPPED,
-        StatusStage.FAILED,
-        StatusStage.CANCELLED,
-    }:
-        if view.queue_position == 0:
-            lines.append("Queue: active")
-        else:
-            lines.append(f"Queue: #{view.queue_position}")
-    if view.current:
-        lines.extend(["", f"{_active_label(view)}: {view.current}"])
-    if view.detail and view.detail != view.current:
+    visible_stage = _visible_stage(view)
+    lines = [_status_line(view), _context_line(view)]
+
+    if visible_stage == StatusStage.RECEIVED:
+        return "\n".join(lines)
+
+    if visible_stage == StatusStage.QUEUED:
+        lines.extend(["", _queue_line(view)])
+        detected = _detected_line(view)
+        if detected:
+            lines.append(detected)
+        return "\n".join(lines)
+
+    if visible_stage in {StatusStage.THINKING, StatusStage.EXPANDING}:
+        lines.extend(["", _preparing_detail(view)])
+        return "\n".join(lines)
+
+    if visible_stage in {StatusStage.DOWNLOADING, StatusStage.SAVING}:
+        lines.extend(["", progress_bar(done, view.total, show_count=True)])
+        eta = _eta_line(view, done)
+        if eta:
+            lines.append(eta)
+        lines.extend(["", render_counters(view.total, view.completed, view.skipped, view.failed)])
+        if view.current and not _looks_like_index_label(view.current):
+            lines.extend(["", f"{_active_label(view)}: {view.current}"])
+        return "\n".join(lines)
+
+    lines.extend(["", render_counters(view.total, view.completed, view.skipped, view.failed)])
+    if view.detail:
         prefix = "Problem" if view.stage == StatusStage.FAILED else "Note"
         lines.append(f"{prefix}: {view.detail}")
     return "\n".join(lines)
 
 
+def _visible_stage(view: RequestView) -> StatusStage:
+    """Collapse internal queue states into user-visible lifecycle states."""
+    if view.stage in {
+        StatusStage.DONE,
+        StatusStage.SKIPPED,
+        StatusStage.FAILED,
+        StatusStage.CANCELLED,
+        StatusStage.DOWNLOADING,
+        StatusStage.SAVING,
+        StatusStage.THINKING,
+        StatusStage.EXPANDING,
+    }:
+        return view.stage
+    if view.queue_position is not None and view.queue_position > 1:
+        return StatusStage.QUEUED
+    if view.stage == StatusStage.QUEUED:
+        return StatusStage.THINKING
+    return StatusStage.RECEIVED
+
+
 def _status_line(view: RequestView) -> str:
     """Render the primary status without duplicating the active item."""
-    if view.stage == StatusStage.EXPANDING:
-        return "🧩 Finding tracks..."
-    return view.stage.value
+    visible_stage = _visible_stage(view)
+    if visible_stage == StatusStage.SKIPPED:
+        return StatusStage.DONE.value
+    if visible_stage == StatusStage.FAILED:
+        return "🔴 Status     Failed"
+    if visible_stage == StatusStage.CANCELLED:
+        return "⚫ Status     Cancelled"
+    return visible_stage.value
 
 
-def _display_title(view: RequestView) -> str:
-    """Prefer human collection context over generic request labels."""
-    if view.collection_title:
-        return view.collection_title
-    normalized = (view.source_label or view.title).casefold()
-    if "playlist" in normalized:
-        return "Playlist"
-    if "album" in normalized:
-        return "Album"
+def _context_line(view: RequestView) -> str:
+    source = _source_name(view)
+    icon = _source_icon(source)
+    title = _display_subject(view)
+    owner = (view.collection_owner or "").strip()
+    if title and owner:
+        return f"{icon} {source} “{title}” by {owner}"
+    if title:
+        return f"{icon} {source} “{title}”"
+    return f"{icon} {source}"
+
+
+def _source_name(view: RequestView) -> str:
+    if view.source_label:
+        return view.source_label
+    normalized_title = view.title.casefold()
+    if "upload" in normalized_title:
+        return "File"
     return view.title
 
 
+def _source_icon(source: str) -> str:
+    normalized = source.casefold()
+    if "spotify" in normalized:
+        return "🎵"
+    if "apple music" in normalized:
+        return "🍏"
+    if "youtube" in normalized:
+        return "📺"
+    if "shazam" in normalized:
+        return "🎶"
+    if "file" in normalized or "upload" in normalized:
+        return "📁"
+    return "🎧"
+
+
+def _display_subject(view: RequestView) -> str | None:
+    if view.collection_title:
+        return view.collection_title
+    if "file" in _source_name(view).casefold() and view.current:
+        return view.current
+    return None
+
+
+def _queue_line(view: RequestView) -> str:
+    position = view.queue_position or 1
+    return f"⏳ Waiting in queue · position #{position}"
+
+
+def _detected_line(view: RequestView) -> str | None:
+    if view.total <= 1:
+        return None
+    source = _source_name(view).casefold()
+    if "playlist" in source or "album" in source:
+        unit = "tracks"
+    elif "file" in source or "upload" in source:
+        unit = "files"
+    else:
+        unit = "items"
+    return f"📦 {view.total} {unit} detected"
+
+
+def _preparing_detail(view: RequestView) -> str:
+    if view.detail:
+        return view.detail
+    source = _source_name(view).casefold()
+    if "playlist" in source or "album" in source:
+        return "🔍 Reading playlist..."
+    if "file" in source or "upload" in source:
+        return "🔍 Reading file..."
+    return "🔍 Reading link..."
+
+
+def _eta_line(view: RequestView, done: int) -> str | None:
+    remaining = max(view.total - done, 0)
+    if view.total <= 1 or done <= 0 or remaining <= 0 or not view.elapsed_seconds:
+        return None
+    seconds = round((view.elapsed_seconds / done) * remaining)
+    if seconds <= 0:
+        return None
+    return f"⏳ ~{_format_duration(seconds)} remaining"
+
+
+def _format_duration(seconds: int) -> str:
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+def _looks_like_index_label(value: str) -> bool:
+    lower = value.casefold()
+    return lower.startswith(("track ", "file ", "link ")) and "/" in lower
+
+
 def _active_label(view: RequestView) -> str:
-    title = view.title.casefold()
-    if "upload" in title:
+    source = _source_name(view).casefold()
+    if "file" in source or "upload" in source:
         return "Item"
     return "Track"
 

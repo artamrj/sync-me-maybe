@@ -92,6 +92,7 @@ Settings fields:
 - `music_dir: Path`
 - `download_tmp_dir: Path`
 - `ytdlp_cookies_file: Path | None`
+- `received_sticker_id: str | None`
 - `max_download_seconds: int`
 - `max_collection_tracks: int`
 - `upload_batch_window_seconds: float`
@@ -104,6 +105,7 @@ Environment variables:
 - `MUSIC_DIR`: default `./music`.
 - `DOWNLOAD_TMP_DIR`: default `./tmp/sync-me-maybe`.
 - `YTDLP_COOKIES_FILE`: optional.
+- `RECEIVED_STICKER_ID`: optional Telegram sticker file ID for instant acknowledgements.
 - `MAX_DOWNLOAD_SECONDS`: default `900`.
 - `MAX_COLLECTION_TRACKS`: default `1000`.
 - `UPLOAD_BATCH_WINDOW_SECONDS`: default `2`.
@@ -190,6 +192,7 @@ Important `RequestState` fields:
 - `collection_title`: playlist or album title shown in status messages when known.
 - `collection_owner`: playlist or album owner shown in status messages when known.
 - `source_label`: provider and link type shown in status messages when known.
+- `download_started_at`: timestamp used for best-effort remaining time estimates.
 - `stage`: current `StatusStage`.
 - `paths`: stored/skipped relative paths.
 - `issue_details`: skipped and failed details shown from final status buttons.
@@ -820,6 +823,7 @@ Main names:
 `StatusStage` values:
 
 - `QUEUED`
+- `RECEIVED`
 - `THINKING`
 - `DOWNLOADING`
 - `SAVING`
@@ -829,7 +833,7 @@ Main names:
 - `FAILED`
 - `CANCELLED`
 
-The UI layer is intentionally simple: it returns plain Telegram text and `InlineKeyboardMarkup`. It does not own business state.
+The UI layer is intentionally simple: it returns plain Telegram text and `InlineKeyboardMarkup`. Aggregate request messages follow `Received -> Preparing -> Queued -> Downloading -> Completed`; `Queued` is rendered only when another job is ahead, and final statuses stay compact.
 
 Inline buttons can include:
 
@@ -837,7 +841,8 @@ Inline buttons can include:
 - Stop request.
 - Refresh status.
 - Show stored path.
-- Show multi-result paths.
+- Show skipped/failed details.
+- Rerun failed jobs.
 - Health check.
 
 ## 9. End-to-End Runtime Lifecycle

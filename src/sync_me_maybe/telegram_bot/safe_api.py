@@ -87,6 +87,18 @@ async def safe_send_message(bot: Bot, chat_id: int, text: str, **kwargs) -> Mess
     )
 
 
+async def safe_send_sticker(
+    bot: Bot, chat_id: int, sticker: str | None, **kwargs
+) -> Message | None:
+    """Safely send an optional sticker without making it critical to a job."""
+    if not sticker:
+        return None
+    return await telegram_call(
+        "send received sticker",
+        lambda: bot.send_sticker(chat_id=chat_id, sticker=sticker, **kwargs),
+    )
+
+
 async def safe_chat_action(bot: Bot, chat_id: int, action: str) -> None:
     """Send typing/upload indicators without making them critical to the job."""
     await telegram_call(

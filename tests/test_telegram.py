@@ -43,6 +43,7 @@ from sync_me_maybe.telegram_bot.runtime import (
 from sync_me_maybe.telegram_bot.safe_api import (
     safe_edit_message,
     safe_send_message,
+    safe_send_sticker,
     telegram_call,
 )
 from sync_me_maybe.telegram_bot.uploads import (
@@ -82,11 +83,14 @@ async def test_safe_wrappers_call_expected_bot_methods(fake_application: SimpleN
     bot = fake_application.bot
     bot.edit_message_text.return_value = "edited"
     bot.send_message.return_value = "sent"
+    bot.send_sticker.return_value = "sticker"
 
     assert await safe_edit_message(bot, 1, 0, "skip") is None
     assert await safe_edit_message(bot, 1, 2, "text") == "edited"
     assert bot.edit_message_text.await_args.kwargs["message_id"] == 2
     assert await safe_send_message(bot, 1, "text") == "sent"
+    assert await safe_send_sticker(bot, 1, None) is None
+    assert await safe_send_sticker(bot, 1, "sticker-id") == "sticker"
 
 
 @pytest.mark.asyncio
@@ -268,6 +272,8 @@ async def test_handle_message_routes_auth_upload_empty_single_and_batch(
     snapshot = await runtime.queue.snapshot()
     assert len(snapshot.pending) == 1
     assert snapshot.pending[0].kind == JobKind.LINK
+    assert "📥 Received" in fake_message.reply_text.await_args_list[-1].args[0]
+    fake_context.application.bot.send_sticker.assert_not_awaited()
 
     fake_message.text = (
         "https://youtu.be/one https://example.com/nope https://open.spotify.com/playlist/abc"
@@ -281,12 +287,15 @@ async def test_handle_message_routes_auth_upload_empty_single_and_batch(
 async def test_enqueue_link_batch_records_unsupported_failures(
     runtime: BotRuntime,
     fake_update: SimpleNamespace,
+    fake_application: SimpleNamespace,
 ) -> None:
     links = [
         (1, classify_url("https://youtu.be/abc")),
         (3, classify_url("https://open.spotify.com/playlist/abc")),
     ]
-    await enqueue_link_batch(fake_update, runtime, links, ["Link 2 unsupported"], link_total=3)
+    await enqueue_link_batch(
+        fake_update, runtime, fake_application, links, ["Link 2 unsupported"], link_total=3
+    )
     request = next(iter(runtime.requests.values()))
     snapshot = await runtime.queue.snapshot()
     assert request.total == 3
@@ -295,6 +304,25 @@ async def test_enqueue_link_batch_records_unsupported_failures(
     assert request.issue_details[0].reason == "Link 2 unsupported"
     assert len(request.job_ids) == 2
     assert [job.kind for job in snapshot.pending] == [JobKind.LINK, JobKind.COLLECTION]
+
+
+@pytest.mark.asyncio
+async def test_received_sticker_is_sent_only_when_configured(
+    runtime: BotRuntime,
+    fake_application: SimpleNamespace,
+    fake_context: SimpleNamespace,
+    fake_update: SimpleNamespace,
+    fake_message: SimpleNamespace,
+) -> None:
+    runtime = BotRuntime(replace(runtime.settings, received_sticker_id="sticker-id"))
+    fake_application.bot_data["runtime"] = runtime
+    fake_context.application = fake_application
+    fake_message.text = "https://youtu.be/abc"
+
+    await handle_message(fake_update, fake_context)
+
+    fake_application.bot.send_sticker.assert_awaited_once()
+    assert fake_application.bot.send_sticker.await_args.kwargs["sticker"] == "sticker-id"
 
 
 @pytest.mark.asyncio

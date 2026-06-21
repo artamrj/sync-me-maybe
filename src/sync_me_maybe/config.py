@@ -47,6 +47,7 @@ class Settings:
     music_dir: Path
     download_tmp_dir: Path
     ytdlp_cookies_file: Path | None = None
+    received_sticker_id: str | None = None
     max_download_seconds: int = 900
     max_collection_tracks: int = 1000
     upload_batch_window_seconds: float = 2.0
@@ -72,6 +73,7 @@ class Settings:
         # Parse numeric limits explicitly so users get actionable messages
         # instead of later failures inside queueing, collection expansion, or yt-dlp.
         cookies = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
+        received_sticker_id = os.environ.get("RECEIVED_STICKER_ID", "").strip() or None
         max_seconds = os.environ.get("MAX_DOWNLOAD_SECONDS", "900").strip()
         try:
             max_download_seconds = int(max_seconds)
@@ -98,6 +100,7 @@ class Settings:
             music_dir=music_dir,
             download_tmp_dir=Path(os.environ.get("DOWNLOAD_TMP_DIR", "./tmp/sync-me-maybe")),
             ytdlp_cookies_file=Path(cookies) if cookies else None,
+            received_sticker_id=received_sticker_id,
             max_download_seconds=max_download_seconds,
             max_collection_tracks=max_collection_tracks,
             upload_batch_window_seconds=upload_batch_window_seconds,

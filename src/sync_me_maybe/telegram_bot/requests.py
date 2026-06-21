@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from telegram.ext import Application
 
 from sync_me_maybe.queueing.queue import QueuedJob
@@ -24,6 +26,12 @@ async def request_position(runtime: BotRuntime, request: RequestState) -> int | 
 
 async def render_request_text(runtime: BotRuntime, request: RequestState) -> str:
     """Render the current RequestState into Telegram message text."""
+    done = request.completed + request.skipped + request.failed
+    elapsed_seconds = None
+    if request.download_started_at and done > 0:
+        elapsed_seconds = max(
+            round((datetime.now(UTC) - request.download_started_at).total_seconds()), 1
+        )
     return render_request(
         RequestView(
             title=request.title,
@@ -39,6 +47,7 @@ async def render_request_text(runtime: BotRuntime, request: RequestState) -> str
             collection_title=request.collection_title,
             collection_owner=request.collection_owner,
             source_label=request.source_label,
+            elapsed_seconds=elapsed_seconds,
         )
     )
 
