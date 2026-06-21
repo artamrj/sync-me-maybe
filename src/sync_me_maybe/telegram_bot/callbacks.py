@@ -55,11 +55,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not details:
             await query.answer("Details are no longer available in memory.", show_alert=True)
             return
-        message = update.effective_message or query.message
-        if not message:
+        chat = getattr(update, "effective_chat", None)
+        chat_id = chat.id if chat else None
+        if chat_id is None and update.effective_message:
+            chat_id = update.effective_message.chat_id
+        if chat_id is None:
             await query.answer("Cannot find chat for details.", show_alert=True)
             return
-        chat_id = message.chat_id
         for chunk in split_telegram_message(details):
             await safe_send_message(context.application.bot, chat_id, chunk)
         await query.answer("Sent details.")
