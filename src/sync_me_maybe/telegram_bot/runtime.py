@@ -51,6 +51,7 @@ class RequestState:
     detail: str | None = None
     collection_title: str | None = None
     collection_owner: str | None = None
+    source_label: str | None = None
     stage: StatusStage = StatusStage.QUEUED
     paths: list[str] = field(default_factory=list)
     issue_details: list[RequestIssueDetail] = field(default_factory=list)

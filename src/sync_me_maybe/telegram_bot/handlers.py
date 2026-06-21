@@ -60,6 +60,13 @@ from sync_me_maybe.ui.messages import (
 
 LOGGER = logging.getLogger(__name__)
 
+PROVIDER_DISPLAY_NAMES = {
+    LinkKind.YOUTUBE: "YouTube",
+    LinkKind.SPOTIFY: "Spotify",
+    LinkKind.APPLE_MUSIC: "Apple Music",
+    LinkKind.SHAZAM: "Shazam",
+}
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Route a non-command Telegram message to upload, link, or collection flow."""
@@ -158,6 +165,7 @@ async def buffer_link_request(
                     total=len(buffered_links) + len(unsupported),
                     failed=len(unsupported),
                     detail=detail,
+                    source_label=batch_source_label(buffered_links, unsupported),
                 )
             ),
             reply_to_message_id=message.message_id,
@@ -172,6 +180,7 @@ async def buffer_link_request(
             failed=len(unsupported),
             detail=detail,
             source_urls=[link.classified_link.url for link in buffered_links],
+            source_label=batch_source_label(buffered_links, unsupported),
         )
         add_unsupported_details(request, unsupported)
         runtime.requests[request_id] = request
@@ -186,6 +195,7 @@ async def buffer_link_request(
         batch.request.current = f"{len(batch.links)} link(s) queued"
         batch.request.detail = "\n".join(batch.unsupported) if batch.unsupported else None
         batch.request.source_urls.extend(link.classified_link.url for link in buffered_links)
+        batch.request.source_label = batch_source_label(batch.links, batch.unsupported)
         add_unsupported_details(batch.request, unsupported)
         if batch.flush_task:
             batch.flush_task.cancel()
@@ -219,6 +229,7 @@ async def enqueue_buffered_link_batch(
     batch.request.failed = len(batch.unsupported)
     batch.request.current = f"{len(batch.links)} link(s) queued"
     batch.request.detail = "\n".join(batch.unsupported) if batch.unsupported else None
+    batch.request.source_label = batch_source_label(batch.links, batch.unsupported)
     add_unsupported_details(batch.request, batch.unsupported)
     for request_index, buffered in enumerate(batch.links, start=1):
         classified = buffered.classified_link
@@ -250,6 +261,49 @@ async def enqueue_buffered_link_batch(
 def link_batch_title(count: int) -> str:
     """Render a compact title for one or more queued music links."""
     return "Music link" if count == 1 else f"{count} music link(s)"
+
+
+def batch_source_label(buffered_links: list[BufferedLink], unsupported: list[str]) -> str | None:
+    """Return a source label only when one valid link owns the whole request."""
+    if len(buffered_links) != 1 or unsupported:
+        return None
+    return source_display(buffered_links[0].classified_link)
+
+
+def source_display(classified) -> str:
+    """Render provider and collection type for status messages."""
+    provider = PROVIDER_DISPLAY_NAMES.get(
+        classified.kind, classified.kind.value.replace("_", " ").title()
+    )
+    if classified.scope == LinkScope.TRACK:
+        return provider
+    return f"{provider} {classified.scope.value}"
+
+
+def track_label(track: object | None) -> str | None:
+    """Render real track metadata without collection index labels."""
+    if track is None:
+        return None
+    title = getattr(track, "title", None)
+    artist = getattr(track, "artist", None)
+    search_query = getattr(track, "search_query", None)
+    if title and artist:
+        return f"{artist} - {title}"
+    if title:
+        return str(title)
+    if search_query:
+        return str(search_query)
+    return None
+
+
+def job_track_label(job: QueuedJob, resolved: object | None = None) -> str:
+    """Prefer resolved track metadata over generic queue labels."""
+    return (
+        track_label(resolved)
+        or track_label(job.resolved_track)
+        or job.display_title
+        or job.source_label
+    )
 
 
 def add_unsupported_details(request: RequestState, unsupported: list[str]) -> None:
@@ -309,7 +363,14 @@ async def enqueue_link(
     request_id = uuid4().hex
     title = classified.kind.value
     status_message = await message.reply_text(
-        render_request(RequestView(title=title, stage=StatusStage.QUEUED, current=detail)),
+        render_request(
+            RequestView(
+                title=title,
+                stage=StatusStage.QUEUED,
+                current=detail,
+                source_label=source_display(classified),
+            )
+        ),
         reply_to_message_id=message.message_id,
         allow_sending_without_reply=True,
     )
@@ -323,6 +384,7 @@ async def enqueue_link(
         total=1,
         current=detail,
         source_urls=[classified.url],
+        source_label=source_display(classified),
     )
     runtime.requests[request_id] = request
     source_label = (
@@ -367,7 +429,14 @@ async def enqueue_collection(
     source = f"{classified.kind.value} {classified.scope.value}"
     request_id = uuid4().hex
     status_message = await message.reply_text(
-        render_request(RequestView(title=source, stage=StatusStage.QUEUED, current=detail)),
+        render_request(
+            RequestView(
+                title=source,
+                stage=StatusStage.QUEUED,
+                current=detail,
+                source_label=source_display(classified),
+            )
+        ),
         reply_to_message_id=message.message_id,
         allow_sending_without_reply=True,
     )
@@ -379,6 +448,7 @@ async def enqueue_collection(
         total=1,
         current=detail,
         source_urls=[classified.url],
+        source_label=source_display(classified),
     )
     runtime.requests[request_id] = request
     source_label = source if link_total == 1 else f"{source} link {link_index}/{link_total}"
@@ -422,6 +492,11 @@ async def enqueue_link_batch(
                 total=link_total,
                 failed=len(unsupported),
                 detail=detail,
+                source_label=(
+                    source_display(classified_links[0][1])
+                    if len(classified_links) == 1 and not unsupported
+                    else None
+                ),
             )
         ),
         reply_to_message_id=message.message_id,
@@ -436,6 +511,11 @@ async def enqueue_link_batch(
         failed=len(unsupported),
         detail=detail,
         source_urls=[classified.url for _, classified in classified_links],
+        source_label=(
+            source_display(classified_links[0][1])
+            if len(classified_links) == 1 and not unsupported
+            else None
+        ),
     )
     add_unsupported_details(request, unsupported)
     runtime.requests[request_id] = request
@@ -491,7 +571,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         await safe_chat_action(bot, job.chat_id, ChatAction.TYPING)
         if request:
             request.stage = StatusStage.THINKING
-            request.current = job.display_title or job.source_label
+            request.current = job_track_label(job)
             request.detail = "Preparing search."
             await update_request(runtime, application, request)
         else:
@@ -511,7 +591,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         await safe_chat_action(bot, job.chat_id, ChatAction.UPLOAD_DOCUMENT)
         if request:
             request.stage = StatusStage.DOWNLOADING
-            request.current = job_detail(job, resolved.search_query or "Direct YouTube Music link.")
+            request.current = track_label(resolved) or "Direct YouTube Music link."
             request.detail = None
             await update_request(runtime, application, request)
         else:
@@ -536,7 +616,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         destination = track_destination(runtime.settings.music_dir, downloaded.info, ".mp3")
         if request:
             request.stage = StatusStage.SAVING
-            request.current = job_detail(job, destination.name)
+            request.current = destination.name
             await update_request(runtime, application, request)
         else:
             await safe_edit_message(
@@ -557,7 +637,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
                 request.stage = StatusStage.FAILED
                 request.failed += 1
                 request.failed_jobs.append(clone_job(job))
-                request.current = job.display_title or job.source_label
+                request.current = job_track_label(job, resolved)
                 request.detail = str(exc)
                 add_link_issue_detail(request, job, "failed", reason=str(exc), resolved=resolved)
                 await update_request(runtime, application, request)
@@ -579,7 +659,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
             request.stage = StatusStage.FAILED
             request.failed += 1
             request.failed_jobs.append(clone_job(job))
-            request.current = job.display_title or job.source_label
+            request.current = job_track_label(job, resolved)
             request.detail = f"Download failed: {exc}"
             add_link_issue_detail(
                 request,
@@ -618,7 +698,9 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         request.paths.append(result.relative_path)
         done = request.completed + request.skipped + request.failed
         request.stage = StatusStage.DONE if done >= request.total else StatusStage.QUEUED
-        request.current = job.display_title or result.relative_path
+        request.current = (
+            None if done >= request.total else track_label(resolved) or result.relative_path
+        )
         request.detail = None
         await update_request(runtime, application, request)
     else:
@@ -703,6 +785,8 @@ async def process_collection_job(
         request.detail = None
         request.collection_owner = collection.owner
         request.collection_title = collection.title
+        if len(request.source_urls) <= 1:
+            request.source_label = source_display(classified)
         await update_request(runtime, application, request)
 
         for index, track in enumerate(tracks, start=1):
@@ -829,7 +913,7 @@ async def retry_link_job(
     retry_job = next_attempt(job)
     if request:
         request.stage = StatusStage.QUEUED
-        request.current = job.display_title or job.source_label
+        request.current = job_track_label(job)
         request.detail = detail
         await update_request(runtime, application, request)
     else:

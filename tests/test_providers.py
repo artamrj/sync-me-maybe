@@ -19,6 +19,7 @@ from sync_me_maybe.music.providers.public_scrape import (
     PublicCollectionScraper,
     balanced_object,
     collection_metadata,
+    collection_metadata_from_page_title,
     dedupe_tracks,
     extract_balanced_json_objects,
     track_from_dict,
@@ -375,6 +376,10 @@ def test_public_scraper_track_conversion_filters_non_tracks() -> None:
 
 
 def test_public_scraper_reads_spotify_embed_collection_metadata() -> None:
+    assert collection_metadata_from_page_title("feels - playlist by Romy Brunner | Spotify") == (
+        "Romy Brunner",
+        "feels",
+    )
     assert collection_metadata(
         [
             {

@@ -7,6 +7,11 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+### Changed
+
+- Improved Telegram status text so collection names become the headline, source platform/type is
+  shown separately, and active collection tracks use real metadata instead of index-only labels.
+
 ## 0.9.6 - 2026-06-21
 
 ### Added

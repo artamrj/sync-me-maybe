@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import requests
@@ -95,17 +96,19 @@ class PublicCollectionScraper:
         for root in json_roots:
             tracks.extend(walk_track_items(root))
         json_owner, json_title = collection_metadata(json_roots)
+        page_owner, page_title = collection_metadata_from_page_title(
+            meta(soup, "og:title") or (soup.title.string if soup.title else None)
+        )
         return ExpandedCollection(
             dedupe_tracks(tracks),
             owner=clean_title(
                 json_owner
+                or page_owner
                 or meta(soup, "music:musician")
                 or meta(soup, "music:creator")
                 or meta(soup, "og:site_name")
             ),
-            title=clean_title(
-                json_title or meta(soup, "og:title") or (soup.title.string if soup.title else None)
-            ),
+            title=clean_title(json_title or page_title),
         )
 
 
@@ -180,6 +183,17 @@ def collection_metadata(values: list[Any]) -> tuple[str | None, str | None]:
         if metadata != (None, None):
             return metadata
     return None, None
+
+
+def collection_metadata_from_page_title(value: str | None) -> tuple[str | None, str | None]:
+    """Parse public page titles like 'feels - playlist by Romy Brunner | Spotify'."""
+    title = clean_title(value)
+    if not title:
+        return None, None
+    match = re.match(r"(?P<title>.+?)\s+-\s+(?:playlist|album)\s+by\s+(?P<owner>.+)$", title, re.I)
+    if not match:
+        return None, title
+    return clean_title(match.group("owner")), clean_title(match.group("title"))
 
 
 def collection_metadata_from_dict(value: Any) -> tuple[str | None, str | None]:

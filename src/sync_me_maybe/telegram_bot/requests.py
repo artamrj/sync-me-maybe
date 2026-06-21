@@ -38,6 +38,7 @@ async def render_request_text(runtime: BotRuntime, request: RequestState) -> str
             paths=request.paths,
             collection_title=request.collection_title,
             collection_owner=request.collection_owner,
+            source_label=request.source_label,
         )
     )
 

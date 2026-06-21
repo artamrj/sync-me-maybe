@@ -369,8 +369,13 @@ async def test_process_link_job_success_failure_and_retry(
     await process_link_job(job, runtime, fake_application)
     assert request.stage == StatusStage.DONE
     assert request.completed == 1
+    assert request.current is None
     assert request.paths == ["Artist - Song.mp3"]
     assert request.issue_details == []
+    rendered_updates = [
+        call.kwargs["text"] for call in fake_application.bot.edit_message_text.await_args_list
+    ]
+    assert any("Track: Artist - Song" in text for text in rendered_updates)
 
     skip_request = RequestState("r-skip", 1, 11, "youtube", 1)
     runtime.requests[skip_request.id] = skip_request
@@ -469,6 +474,7 @@ async def test_process_collection_job_enqueues_child_tracks(
     assert request.total == 2
     assert request.collection_owner == "Owner"
     assert request.collection_title == "Playlist"
+    assert request.source_label == "Spotify playlist"
     assert len(snapshot.pending) == 2
     assert snapshot.pending[0].resolved_track.search_query == "Artist One"
     assert snapshot.pending[0].resolved_track.collection_owner == "Owner"

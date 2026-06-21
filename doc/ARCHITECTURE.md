@@ -189,6 +189,7 @@ Important `RequestState` fields:
 - `detail`: extra error or progress detail.
 - `collection_title`: playlist or album title shown in status messages when known.
 - `collection_owner`: playlist or album owner shown in status messages when known.
+- `source_label`: provider and link type shown in status messages when known.
 - `stage`: current `StatusStage`.
 - `paths`: stored/skipped relative paths.
 - `issue_details`: skipped and failed details shown from final status buttons.

@@ -38,6 +38,7 @@ class RequestView:
     paths: list[str] = field(default_factory=list)
     collection_title: str | None = None
     collection_owner: str | None = None
+    source_label: str | None = None
 
 
 def render_welcome(authorized: bool) -> str:
@@ -137,13 +138,12 @@ def render_request(view: RequestView) -> str:
     """Render the aggregate request status used for batches and collections."""
     done = view.completed + view.skipped + view.failed
     lines = [
-        f"🎧 {view.title}",
+        f"🎧 {_display_title(view)}",
         _status_line(view),
         "",
     ]
-    collection_label = _collection_label(view.title)
-    if view.collection_title and collection_label:
-        lines.append(f"{collection_label} name: {view.collection_title}")
+    if view.source_label:
+        lines.append(f"Source: {view.source_label}")
     if view.collection_owner:
         lines.append(f"By: {view.collection_owner}")
     if len(lines) > 3:
@@ -155,7 +155,12 @@ def render_request(view: RequestView) -> str:
             render_counters(view.total, view.completed, view.skipped, view.failed),
         ]
     )
-    if view.queue_position is not None:
+    if view.queue_position is not None and view.stage not in {
+        StatusStage.DONE,
+        StatusStage.SKIPPED,
+        StatusStage.FAILED,
+        StatusStage.CANCELLED,
+    }:
         if view.queue_position == 0:
             lines.append("Queue: active")
         else:
@@ -175,13 +180,16 @@ def _status_line(view: RequestView) -> str:
     return view.stage.value
 
 
-def _collection_label(title: str) -> str | None:
-    normalized = title.casefold()
+def _display_title(view: RequestView) -> str:
+    """Prefer human collection context over generic request labels."""
+    if view.collection_title:
+        return view.collection_title
+    normalized = (view.source_label or view.title).casefold()
     if "playlist" in normalized:
         return "Playlist"
     if "album" in normalized:
         return "Album"
-    return None
+    return view.title
 
 
 def _active_label(view: RequestView) -> str:

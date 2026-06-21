@@ -179,10 +179,15 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
             queue_position=0,
             collection_title="femme",
             collection_owner="Valeria Gershannik",
+            source_label="Spotify playlist",
         )
     )
     assert "⬇️ Downloading ·" not in active_playlist
-    assert "Playlist name: femme" in active_playlist
+    assert "🎧 femme" in active_playlist
+    assert "🎧 Spotify playlist" not in active_playlist
+    assert "Source: Spotify playlist" in active_playlist
+    assert "Playlist name:" not in active_playlist
+    assert "Album name:" not in active_playlist
     assert "Playlist: femme" not in active_playlist
     assert "By: Valeria Gershannik" in active_playlist
     assert "██░░░░░░░░ 25%" in active_playlist
@@ -193,19 +198,41 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
     assert "Track: Mumford & Sons - White Blank Page" in active_playlist
 
     active_album = render_request(
-        RequestView(title="Apple Music album", stage=StatusStage.QUEUED, collection_title="Album")
+        RequestView(
+            title="Apple Music album",
+            stage=StatusStage.QUEUED,
+            collection_title="Album",
+            source_label="Apple Music album",
+        )
     )
-    assert "Album name: Album" in active_album
+    assert "🎧 Album" in active_album
+    assert "Source: Apple Music album" in active_album
+    assert "Album name:" not in active_album
+
+    missing_title_playlist = render_request(
+        RequestView(
+            title="Music link",
+            stage=StatusStage.DONE,
+            source_label="Spotify playlist",
+            queue_position=0,
+        )
+    )
+    assert "🎧 Playlist" in missing_title_playlist
+    assert "Source: Spotify playlist" in missing_title_playlist
+    assert "Track:" not in missing_title_playlist
+    assert "Queue:" not in missing_title_playlist
 
     title_only_playlist = render_request(
         RequestView(
             title="Spotify playlist",
             stage=StatusStage.EXPANDING,
             collection_title="femme",
+            source_label="Spotify playlist",
         )
     )
     assert "🧩 Finding tracks..." in title_only_playlist
-    assert "Playlist name: femme" in title_only_playlist
+    assert "🎧 femme" in title_only_playlist
+    assert "Playlist name:" not in title_only_playlist
     assert "By:" not in title_only_playlist
 
     upload_request = render_request(
