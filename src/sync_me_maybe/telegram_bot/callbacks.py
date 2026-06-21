@@ -6,8 +6,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from sync_me_maybe.telegram_bot.requests import update_request
-from sync_me_maybe.telegram_bot.safe_api import safe_send_message
 from sync_me_maybe.telegram_bot.runtime import BotRuntime
+from sync_me_maybe.telegram_bot.safe_api import safe_send_message
 from sync_me_maybe.ui.messages import StatusStage
 
 DETAIL_MESSAGE_LIMIT = 3900
