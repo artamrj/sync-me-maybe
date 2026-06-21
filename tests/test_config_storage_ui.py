@@ -154,7 +154,6 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
         path_callback_data="path:1",
         refresh_callback_data="refresh:1",
         cancel_callback_data="cancel:1",
-        results_callback_data="results:1",
         include_health=True,
     )
     assert keyboard is not None
@@ -164,6 +163,5 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
         "⛔ Stop",
         "🔄 Refresh",
         "📍 Show path",
-        "📂 Show results",
         "🩺 Health",
     ]

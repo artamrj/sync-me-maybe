@@ -89,8 +89,8 @@ class BotRuntime:
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
-        # Callback data in Telegram buttons must be short, so paths/results are
-        # remembered in memory and buttons carry only generated tokens.
+        # Callback data in Telegram buttons must be short, so paths are remembered
+        # in memory and buttons carry only generated tokens.
         self.path_callbacks: dict[str, str] = {}
         self.queue = DownloadQueue()
         self.resolver = LinkResolver()
@@ -115,15 +115,6 @@ class BotRuntime:
         token = uuid4().hex[:16]
         self.path_callbacks[token] = relative_path
         return f"path:{token}"
-
-    def remember_results(self, request: RequestState) -> str:
-        """Store a compact result list for multi-item requests."""
-        token = uuid4().hex[:16]
-        shown = request.paths[:8]
-        more = len(request.paths) - len(shown)
-        suffix = f"\n...and {more} more" if more > 0 else ""
-        self.path_callbacks[token] = "\n".join(shown) + suffix if shown else "No stored paths yet."
-        return f"results:{token}"
 
     async def process_job(self, job: QueuedJob, application: Application) -> None:
         """Dispatch queued work to the handler module that owns that job kind."""

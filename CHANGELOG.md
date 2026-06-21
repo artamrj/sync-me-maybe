@@ -17,6 +17,10 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 - Bumped `pyproject.toml`, `uv.lock`, and package `__version__` from `0.9.1` to `0.9.5`.
 
+### Removed
+
+- Removed the multi-item `Show results` status button and its callback handling.
+
 ## 0.9.1 - 2026-06-21
 
 ### Fixed

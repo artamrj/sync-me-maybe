@@ -37,19 +37,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if data.startswith("path:"):
-        # Path/result callbacks intentionally read from memory. If the process
-        # restarted, the file may still exist but the short callback token is gone.
+        # Path callbacks intentionally read from memory. If the process restarted,
+        # the file may still exist but the short callback token is gone.
         token = data.removeprefix("path:")
         await query.answer(
             runtime.path_callbacks.get(token, "Path is no longer available in memory."),
-            show_alert=True,
-        )
-        return
-
-    if data.startswith("results:"):
-        token = data.removeprefix("results:")
-        await query.answer(
-            runtime.path_callbacks.get(token, "Results are no longer available in memory."),
             show_alert=True,
         )
         return

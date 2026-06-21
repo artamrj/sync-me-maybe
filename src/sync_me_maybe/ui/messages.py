@@ -153,8 +153,6 @@ def render_request(view: RequestView) -> str:
     if view.detail and view.detail != view.current:
         lines.append(view.detail)
     if view.paths and done >= view.total:
-        # Keep the Telegram message short. Full multi-result lists are available
-        # through the "Show results" callback button.
         lines.extend(["", f"📂 Results: {len(view.paths)} stored/skipped path(s)"])
         for path in view.paths[:3]:
             lines.append(f"• {path}")
@@ -177,7 +175,6 @@ def status_keyboard(
     path_callback_data: str | None = None,
     refresh_callback_data: str | None = None,
     cancel_callback_data: str | None = None,
-    results_callback_data: str | None = None,
     include_health: bool = False,
 ) -> InlineKeyboardMarkup | None:
     """Build optional inline buttons for source links and status actions."""
@@ -192,10 +189,6 @@ def status_keyboard(
     if relative_path:
         action_row.append(
             InlineKeyboardButton("📍 Show path", callback_data=path_callback_data or "path")
-        )
-    if results_callback_data:
-        action_row.append(
-            InlineKeyboardButton("📂 Show results", callback_data=results_callback_data)
         )
     if action_row:
         rows.append(action_row)

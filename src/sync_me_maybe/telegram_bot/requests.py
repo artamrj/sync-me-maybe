@@ -46,7 +46,7 @@ def request_keyboard(runtime: BotRuntime, request: RequestState):
     relative_path = request.paths[0] if request.total == 1 and request.paths else None
     done = request.completed + request.skipped + request.failed
     # Finished requests should not show refresh/cancel buttons, but can still
-    # expose source URLs and stored result paths.
+    # expose source URLs and single stored paths.
     is_terminal = (
         request.cancelled
         or request.stage in {StatusStage.DONE, StatusStage.FAILED, StatusStage.CANCELLED}
@@ -58,9 +58,6 @@ def request_keyboard(runtime: BotRuntime, request: RequestState):
         path_callback_data=runtime.remember_path(relative_path) if relative_path else None,
         refresh_callback_data=None if is_terminal else f"refresh:{request.id}",
         cancel_callback_data=None if is_terminal else f"cancel:{request.id}",
-        results_callback_data=runtime.remember_results(request)
-        if request.paths and request.total > 1
-        else None,
     )
 
 
