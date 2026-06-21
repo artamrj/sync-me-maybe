@@ -85,6 +85,8 @@ Tags:
 - `latest`: latest image published by the release pipeline.
 - `<project version>`: exact version from `pyproject.toml`, without a `v` prefix.
 
+See [CHANGELOG.md](CHANGELOG.md) for release history and versioning notes.
+
 ## Environment Variables
 
 - `TELEGRAM_BOT_TOKEN`: required Telegram bot token.
