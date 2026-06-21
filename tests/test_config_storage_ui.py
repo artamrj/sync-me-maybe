@@ -237,7 +237,7 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
             source_label="Apple Music album",
         )
     )
-    assert "🍏 Apple Music album “Album”" in active_album
+    assert "🍎 Apple Music album “Album”" in active_album
     assert "Source:" not in active_album
     assert "Album name:" not in active_album
 

@@ -114,9 +114,10 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
     batch = runtime.upload_batches.get(key)
     if not batch:
         request_id = uuid4().hex
+        await send_received_sticker(runtime, application, message.chat_id, message.message_id)
         status_message = await message.reply_text(
             render_request(
-                RequestView(title="Telegram upload", stage=StatusStage.RECEIVED, current=filename)
+                RequestView(title="Telegram upload", stage=StatusStage.THINKING, current=filename)
             ),
             reply_to_message_id=message.message_id,
             allow_sending_without_reply=True,
@@ -128,9 +129,8 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
             title="Telegram upload",
             total=1,
             current=filename,
-            stage=StatusStage.RECEIVED,
+            stage=StatusStage.THINKING,
         )
-        await send_received_sticker(runtime, application, message.chat_id, message.message_id)
         runtime.requests[request_id] = request
         batch = UploadBatch(
             key=key,
@@ -200,12 +200,19 @@ async def enqueue_upload_request(
     """Create and enqueue upload jobs without the delayed batch buffer."""
     first = uploads[0]
     request_id = uuid4().hex
+    await safe_send_sticker(
+        application.bot,
+        chat_id,
+        runtime.settings.received_sticker_id,
+        reply_to_message_id=original_message_id,
+        allow_sending_without_reply=True,
+    )
     status_message = await application.bot.send_message(
         chat_id=chat_id,
         text=render_request(
             RequestView(
                 title="Telegram upload" if len(uploads) == 1 else "Telegram uploads",
-                stage=StatusStage.RECEIVED,
+                stage=StatusStage.THINKING,
                 current=first.payload.filename,
                 total=len(uploads),
             )
@@ -220,14 +227,7 @@ async def enqueue_upload_request(
         title="Telegram upload" if len(uploads) == 1 else "Telegram uploads",
         total=len(uploads),
         current=first.payload.filename,
-        stage=StatusStage.RECEIVED,
-    )
-    await safe_send_sticker(
-        application.bot,
-        chat_id,
-        runtime.settings.received_sticker_id,
-        reply_to_message_id=original_message_id,
-        allow_sending_without_reply=True,
+        stage=StatusStage.THINKING,
     )
     runtime.requests[request_id] = request
     for index, buffered in enumerate(uploads, start=1):

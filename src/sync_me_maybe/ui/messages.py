@@ -232,7 +232,7 @@ def _source_icon(source: str) -> str:
     if "spotify" in normalized:
         return "🎵"
     if "apple music" in normalized:
-        return "🍏"
+        return "🍎"
     if "youtube" in normalized:
         return "📺"
     if "shazam" in normalized:

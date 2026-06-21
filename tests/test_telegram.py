@@ -272,7 +272,8 @@ async def test_handle_message_routes_auth_upload_empty_single_and_batch(
     snapshot = await runtime.queue.snapshot()
     assert len(snapshot.pending) == 1
     assert snapshot.pending[0].kind == JobKind.LINK
-    assert "📥 Received" in fake_message.reply_text.await_args_list[-1].args[0]
+    assert "📥 Received" not in fake_message.reply_text.await_args_list[-1].args[0]
+    assert "🟣 Status     Preparing" in fake_message.reply_text.await_args_list[-1].args[0]
     fake_context.application.bot.send_sticker.assert_not_awaited()
 
     fake_message.text = (
@@ -323,6 +324,7 @@ async def test_received_sticker_is_sent_only_when_configured(
 
     fake_application.bot.send_sticker.assert_awaited_once()
     assert fake_application.bot.send_sticker.await_args.kwargs["sticker"] == "sticker-id"
+    assert "📥 Received" not in fake_message.reply_text.await_args.args[0]
 
 
 @pytest.mark.asyncio

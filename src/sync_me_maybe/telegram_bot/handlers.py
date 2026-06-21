@@ -173,11 +173,12 @@ async def buffer_link_request(
         request_id = uuid4().hex
         title = link_batch_title(len(buffered_links))
         detail = "\n".join(unsupported) if unsupported else None
+        await send_received_sticker(runtime, application, message.chat_id, message.message_id)
         status_message = await message.reply_text(
             render_request(
                 RequestView(
                     title=title,
-                    stage=StatusStage.RECEIVED,
+                    stage=StatusStage.THINKING,
                     total=len(buffered_links) + len(unsupported),
                     failed=len(unsupported),
                     detail=detail,
@@ -197,9 +198,8 @@ async def buffer_link_request(
             detail=detail,
             source_urls=[link.classified_link.url for link in buffered_links],
             source_label=batch_source_label(buffered_links, unsupported),
-            stage=StatusStage.RECEIVED,
+            stage=StatusStage.THINKING,
         )
-        await send_received_sticker(runtime, application, message.chat_id, message.message_id)
         add_unsupported_details(request, unsupported)
         runtime.requests[request_id] = request
         batch = LinkBatch(key=key, request=request, links=buffered_links, unsupported=unsupported)
@@ -395,11 +395,12 @@ async def enqueue_link(
     detail = f"Link {link_index} of {link_total}" if link_total > 1 else None
     request_id = uuid4().hex
     title = classified.kind.value
+    await send_received_sticker(runtime, application, message.chat_id, message.message_id)
     status_message = await message.reply_text(
         render_request(
             RequestView(
                 title=title,
-                stage=StatusStage.RECEIVED,
+                stage=StatusStage.THINKING,
                 current=detail,
                 source_label=source_display(classified),
             )
@@ -418,9 +419,8 @@ async def enqueue_link(
         current=detail,
         source_urls=[classified.url],
         source_label=source_display(classified),
-        stage=StatusStage.RECEIVED,
+        stage=StatusStage.THINKING,
     )
-    await send_received_sticker(runtime, application, message.chat_id, message.message_id)
     runtime.requests[request_id] = request
     source_label = (
         classified.kind.value
@@ -465,11 +465,12 @@ async def enqueue_collection(
     detail = f"Link {link_index} of {link_total}" if link_total > 1 else None
     source = f"{classified.kind.value} {classified.scope.value}"
     request_id = uuid4().hex
+    await send_received_sticker(runtime, application, message.chat_id, message.message_id)
     status_message = await message.reply_text(
         render_request(
             RequestView(
                 title=source,
-                stage=StatusStage.RECEIVED,
+                stage=StatusStage.THINKING,
                 current=detail,
                 source_label=source_display(classified),
             )
@@ -486,9 +487,8 @@ async def enqueue_collection(
         current=detail,
         source_urls=[classified.url],
         source_label=source_display(classified),
-        stage=StatusStage.RECEIVED,
+        stage=StatusStage.THINKING,
     )
-    await send_received_sticker(runtime, application, message.chat_id, message.message_id)
     runtime.requests[request_id] = request
     source_label = source if link_total == 1 else f"{source} link {link_index}/{link_total}"
     job = QueuedJob(
@@ -529,11 +529,12 @@ async def enqueue_link_batch(
     request_id = uuid4().hex
     title = f"{len(classified_links)} music link(s)"
     detail = "\n".join(unsupported) if unsupported else None
+    await send_received_sticker(runtime, application, message.chat_id, message.message_id)
     status_message = await message.reply_text(
         render_request(
             RequestView(
                 title=title,
-                stage=StatusStage.RECEIVED,
+                stage=StatusStage.THINKING,
                 total=link_total,
                 failed=len(unsupported),
                 detail=detail,
@@ -561,9 +562,8 @@ async def enqueue_link_batch(
             if len(classified_links) == 1 and not unsupported
             else None
         ),
-        stage=StatusStage.RECEIVED,
+        stage=StatusStage.THINKING,
     )
-    await send_received_sticker(runtime, application, message.chat_id, message.message_id)
     add_unsupported_details(request, unsupported)
     runtime.requests[request_id] = request
 

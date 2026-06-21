@@ -7,6 +7,18 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+## 0.10.1 - 2026-06-22
+
+### Fixed
+
+- Changed the received acknowledgement behavior so the optional sticker is sent immediately and
+  normal status text starts at `Preparing` instead of showing a visible `Received` message.
+- Changed the Apple Music status icon from green apple to red apple.
+
+### Changed
+
+- Bumped `pyproject.toml`, `uv.lock`, and package `__version__` from `0.10.0` to `0.10.1`.
+
 ## 0.10.0 - 2026-06-22
 
 ### Added
