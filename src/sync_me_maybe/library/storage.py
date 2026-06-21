@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from sync_me_maybe.music.filenames import sanitize_filename
 
@@ -19,6 +21,7 @@ class TrackInfo:
     track_number: int | None = None
     collection_owner: str | None = None
     collection_title: str | None = None
+    collection_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -38,13 +41,36 @@ def track_destination(music_dir: Path, info: TrackInfo, extension: str = ".mp3")
     stem = f"{artist} - {title}" if artist else title
     collection_title = sanitize_filename(info.collection_title, "")
     if collection_title:
-        collection_owner = sanitize_filename(info.collection_owner, "")
-        folder = (
-            f"{collection_owner} - {collection_title}" if collection_owner else collection_title
+        collection_owner = (
+            sanitize_filename(info.collection_owner, "")
+            if trustworthy_collection_owner(info.collection_owner)
+            else ""
         )
+        if collection_owner:
+            folder = f"{collection_owner} - {collection_title}"
+        elif info.collection_url:
+            folder = sanitize_filename(f"{info.collection_title}({info.collection_url})", "")
+        else:
+            folder = collection_title
         return music_dir / folder / f"{stem}{suffix}"
 
     return music_dir / f"{stem}{suffix}"
+
+
+def trustworthy_collection_owner(value: str | None) -> bool:
+    """Return whether provider owner metadata is a display name, not a URL."""
+    if not value:
+        return False
+    value = value.strip()
+    if not value:
+        return False
+    if "://" in value:
+        return False
+    parsed = urlparse(f"https://{value}")
+    host = parsed.netloc.lower()
+    if "." in host and parsed.path not in {"", "/"}:
+        return False
+    return not bool(re.match(r"^(?:www\.)?[\w-]+\.[\w.-]+(?:/|$)", value, re.IGNORECASE))
 
 
 def upload_destination(music_dir: Path, filename: str | None) -> Path:

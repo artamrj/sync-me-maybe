@@ -16,6 +16,8 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 - Fixed Spotify playlist and album expansion by falling back to public embed metadata when the
   main Spotify page does not expose tracks.
+- Fixed collection folder naming so URL-like owners are ignored and ownerless collections fall
+  back to `Collection(<collection URL>)`.
 
 ## 0.9.5 - 2026-06-21
 

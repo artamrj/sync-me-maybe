@@ -18,6 +18,7 @@ from sync_me_maybe.music.providers.common import (
 from sync_me_maybe.music.providers.public_scrape import (
     PublicCollectionScraper,
     balanced_object,
+    collection_metadata,
     dedupe_tracks,
     extract_balanced_json_objects,
     track_from_dict,
@@ -371,6 +372,29 @@ def test_public_scraper_track_conversion_filters_non_tracks() -> None:
         track_number=None,
         source_url=None,
     )
+
+
+def test_public_scraper_reads_spotify_embed_collection_metadata() -> None:
+    assert collection_metadata(
+        [
+            {
+                "props": {
+                    "pageProps": {
+                        "state": {
+                            "data": {
+                                "entity": {
+                                    "type": "playlist",
+                                    "title": "femme",
+                                    "subtitle": "Valeria G!",
+                                    "trackList": [{"title": "Song"}],
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        ]
+    ) == ("Valeria G!", "femme")
 
 
 @pytest.mark.asyncio

@@ -94,15 +94,17 @@ class PublicCollectionScraper:
         tracks: list[TrackSearchItem] = []
         for root in json_roots:
             tracks.extend(walk_track_items(root))
+        json_owner, json_title = collection_metadata(json_roots)
         return ExpandedCollection(
             dedupe_tracks(tracks),
             owner=clean_title(
-                meta(soup, "music:musician")
+                json_owner
+                or meta(soup, "music:musician")
                 or meta(soup, "music:creator")
                 or meta(soup, "og:site_name")
             ),
             title=clean_title(
-                meta(soup, "og:title") or (soup.title.string if soup.title else None)
+                json_title or meta(soup, "og:title") or (soup.title.string if soup.title else None)
             ),
         )
 
@@ -169,6 +171,37 @@ def walk_track_items(value: Any) -> list[TrackSearchItem]:
         for child in value:
             tracks.extend(walk_track_items(child))
     return tracks
+
+
+def collection_metadata(values: list[Any]) -> tuple[str | None, str | None]:
+    """Return best-effort collection owner and title from embedded JSON roots."""
+    for value in values:
+        metadata = collection_metadata_from_dict(value)
+        if metadata != (None, None):
+            return metadata
+    return None, None
+
+
+def collection_metadata_from_dict(value: Any) -> tuple[str | None, str | None]:
+    if isinstance(value, dict):
+        entity = value.get("entity")
+        if isinstance(entity, dict):
+            type_value = str(entity.get("type") or entity.get("entityType") or "").casefold()
+            track_list = entity.get("trackList")
+            if type_value in {"playlist", "album"} and isinstance(track_list, list):
+                return clean_title(entity.get("subtitle")), clean_title(
+                    entity.get("title") or entity.get("name")
+                )
+        for child in value.values():
+            metadata = collection_metadata_from_dict(child)
+            if metadata != (None, None):
+                return metadata
+    elif isinstance(value, list):
+        for child in value:
+            metadata = collection_metadata_from_dict(child)
+            if metadata != (None, None):
+                return metadata
+    return None, None
 
 
 def track_from_dict(value: dict[str, Any]) -> TrackSearchItem | None:

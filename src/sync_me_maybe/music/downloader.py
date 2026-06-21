@@ -152,6 +152,7 @@ def _track_info(info: dict[str, Any], resolved: ResolvedTrack) -> TrackInfo:
         track_number=track_number,
         collection_owner=resolved.collection_owner,
         collection_title=resolved.collection_title,
+        collection_url=resolved.collection_url,
     )
 
 

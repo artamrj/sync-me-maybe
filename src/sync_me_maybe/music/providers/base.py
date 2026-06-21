@@ -25,6 +25,7 @@ class ResolvedTrack:
     track_number: int | None = None
     collection_owner: str | None = None
     collection_title: str | None = None
+    collection_url: str | None = None
 
 
 @dataclass(frozen=True)

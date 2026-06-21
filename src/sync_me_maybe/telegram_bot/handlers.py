@@ -716,6 +716,7 @@ async def process_collection_job(
                 track_number=track.track_number,
                 collection_owner=collection.owner,
                 collection_title=collection.title,
+                collection_url=classified.url,
             )
             child = QueuedJob(
                 kind=JobKind.LINK,
@@ -781,6 +782,7 @@ async def process_collection_job(
             track_number=track.track_number,
             collection_owner=collection.owner,
             collection_title=collection.title,
+            collection_url=classified.url,
         )
         child = QueuedJob(
             kind=JobKind.LINK,

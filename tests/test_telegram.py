@@ -423,6 +423,7 @@ async def test_process_collection_job_enqueues_child_tracks(
     assert snapshot.pending[0].resolved_track.search_query == "Artist One"
     assert snapshot.pending[0].resolved_track.collection_owner == "Owner"
     assert snapshot.pending[0].resolved_track.collection_title == "Playlist"
+    assert snapshot.pending[0].resolved_track.collection_url == classified.url
 
 
 @pytest.mark.asyncio

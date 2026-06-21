@@ -95,6 +95,25 @@ def test_track_and_upload_destinations_use_safe_library_layout(tmp_path: Path) -
     )
     missing_owner = TrackInfo(title="Song", artist="Artist", collection_title="Playlist")
     assert track_destination(tmp_path, missing_owner) == tmp_path / "Playlist/Artist - Song.mp3"
+    missing_owner_with_url = TrackInfo(
+        title="Song",
+        artist="Artist",
+        collection_title="Playlist",
+        collection_url="https://open.spotify.com/playlist/abc",
+    )
+    assert track_destination(tmp_path, missing_owner_with_url) == (
+        tmp_path / "Playlist(https___open.spotify.com_playlist_abc)/Artist - Song.mp3"
+    )
+    url_like_owner = TrackInfo(
+        title="Song",
+        artist="Artist",
+        collection_owner="https://open.spotify.com/user/roullin",
+        collection_title="Feels",
+        collection_url="https://open.spotify.com/playlist/abc",
+    )
+    assert track_destination(tmp_path, url_like_owner) == (
+        tmp_path / "Feels(https___open.spotify.com_playlist_abc)/Artist - Song.mp3"
+    )
     unsafe_collection = TrackInfo(
         title="Song",
         artist="Artist",

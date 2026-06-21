@@ -750,18 +750,19 @@ Main names:
 Link download destination format:
 
 ```text
-Artist/Album/NN - Title.mp3
-Artist/Album/Title.mp3
-Artist/NN - Title.mp3
-Artist/Title.mp3
+Artist - Title.mp3
+Title.mp3
+Owner - Collection/Artist - Title.mp3
+Collection(<collection URL>)/Artist - Title.mp3
 ```
 
 Rules:
 
-- Artist fallback: `Unknown Artist`.
+- Artist is omitted from the filename when missing.
 - Title fallback: `Unknown Title`.
-- Album directory is used only when album metadata exists and is not `Unknown Album`.
-- Track number is formatted as two digits, for example `03 - Song.mp3`.
+- Collection folders use `Owner - Collection` when the owner is a real display name.
+- URL-like collection owners are ignored.
+- When a collection owner is missing or URL-like and the source URL is available, collection folders use `Collection(<collection URL>)`.
 
 Upload destination format:
 
