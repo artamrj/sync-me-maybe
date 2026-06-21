@@ -7,6 +7,17 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+## 0.9.1 - 2026-06-21
+
+### Fixed
+
+- Fixed CI formatting failure by applying Ruff formatting to `tests/test_providers.py`.
+
+### Versioning
+
+- Bumped `pyproject.toml` and package `__version__` from `0.9.0` to `0.9.1` for this
+  bugfix release.
+
 ## 0.9.0 - 2026-06-21
 
 ### Added

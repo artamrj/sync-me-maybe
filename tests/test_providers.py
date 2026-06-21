@@ -199,7 +199,9 @@ def test_apple_playlist_catalog_expansion_follows_pagination() -> None:
     ]
 
     with patch("sync_me_maybe.music.providers.apple.requests.get", side_effect=responses) as get:
-        tracks = provider._catalog_collection("https://music.apple.com/de/playlist/all/pl.test?l=en")
+        tracks = provider._catalog_collection(
+            "https://music.apple.com/de/playlist/all/pl.test?l=en"
+        )
 
     assert tracks == [
         TrackSearchItem("First", "Artist", "Album", 1, "https://music.apple.com/song/1"),
@@ -208,12 +210,10 @@ def test_apple_playlist_catalog_expansion_follows_pagination() -> None:
         TrackSearchItem("Fourth", "Other", "Album", 4, "https://music.apple.com/song/4"),
     ]
     assert get.call_args_list[2].args[0] == (
-        "https://amp-api.music.apple.com/v1/catalog/de/playlists/pl.test"
-        "?l=en-DE&include=tracks"
+        "https://amp-api.music.apple.com/v1/catalog/de/playlists/pl.test?l=en-DE&include=tracks"
     )
     assert get.call_args_list[3].args[0] == (
-        "https://amp-api.music.apple.com/v1/catalog/de/playlists/pl.test/tracks"
-        "?l=en-DE&offset=2"
+        "https://amp-api.music.apple.com/v1/catalog/de/playlists/pl.test/tracks?l=en-DE&offset=2"
     )
 
 
@@ -266,9 +266,7 @@ def apple_song(
     }
 
 
-def apple_response(
-    *, text: str = "", json_data: dict[str, object] | None = None
-) -> Mock:
+def apple_response(*, text: str = "", json_data: dict[str, object] | None = None) -> Mock:
     response = Mock()
     response.text = text
     response.raise_for_status.return_value = None
