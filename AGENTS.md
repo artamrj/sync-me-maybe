@@ -28,3 +28,15 @@
 - Use `apply_patch` for manual edits when appropriate.
 - If requirements are ambiguous, ask for clarification instead of guessing.
 - Document required migration, deployment, or configuration changes when applicable.
+
+## Versioning
+
+- Follow Semantic Versioning when the project has a public version.
+- Decide whether a version bump is required based on the change type.
+- Bump `MAJOR` for breaking API, config, CLI, database, behavior, or compatibility changes.
+- Bump `MINOR` for backward-compatible features or meaningful enhancements.
+- Bump `PATCH` for backward-compatible bug fixes, security fixes, or small user-visible corrections.
+- Do not bump version for docs-only, tests-only, comments, formatting, internal refactors, or CI-only changes unless they affect released artifacts.
+- Update all canonical version locations together, such as `package.json`, lock files, `pyproject.toml`, `Cargo.toml`, app metadata, or release files.
+- Mention the version bump in `CHANGELOG.md`.
+- If unsure whether to bump, explain the reasoning and ask before changing version files.
