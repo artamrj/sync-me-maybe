@@ -11,7 +11,7 @@ from telegram.error import BadRequest, RetryAfter, TelegramError, TimedOut
 
 from sync_me_maybe.library.storage import TrackInfo
 from sync_me_maybe.music.downloader import DownloadedTrack, DownloadError
-from sync_me_maybe.music.providers.base import TrackSearchItem
+from sync_me_maybe.music.providers.base import ExpandedCollection, TrackSearchItem
 from sync_me_maybe.music.resolver import ResolvedTrack
 from sync_me_maybe.music.urls import classify_url
 from sync_me_maybe.queueing.queue import JobKind, QueuedJob, UploadPayload
@@ -318,7 +318,11 @@ async def test_process_collection_job_enqueues_child_tracks(
         request_id=request.id,
     )
     runtime.collection_resolver.expand = AsyncMock(
-        return_value=[TrackSearchItem("One", "Artist"), TrackSearchItem("Two", "Artist")]
+        return_value=ExpandedCollection(
+            [TrackSearchItem("One", "Artist"), TrackSearchItem("Two", "Artist")],
+            owner="Owner",
+            title="Playlist",
+        )
     )
 
     await process_collection_job(job, runtime, fake_application)
@@ -326,6 +330,8 @@ async def test_process_collection_job_enqueues_child_tracks(
     assert request.total == 2
     assert len(snapshot.pending) == 2
     assert snapshot.pending[0].resolved_track.search_query == "Artist One"
+    assert snapshot.pending[0].resolved_track.collection_owner == "Owner"
+    assert snapshot.pending[0].resolved_track.collection_title == "Playlist"
 
 
 @pytest.mark.asyncio

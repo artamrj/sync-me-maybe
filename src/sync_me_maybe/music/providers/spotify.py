@@ -12,7 +12,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from sync_me_maybe.music.filenames import clean_title
-from sync_me_maybe.music.providers.base import ProviderError, ResolvedTrack, TrackSearchItem
+from sync_me_maybe.music.providers.base import ExpandedCollection, ProviderError, ResolvedTrack
 from sync_me_maybe.music.providers.common import slug_query
 from sync_me_maybe.music.providers.public_scrape import PublicCollectionScraper
 from sync_me_maybe.music.urls import ClassifiedLink, LinkKind, LinkScope
@@ -48,7 +48,7 @@ class SpotifyProvider:
         """Resolve a Spotify track link without blocking the event loop."""
         return await asyncio.to_thread(self._resolve_track_sync, link)
 
-    async def expand_collection(self, link: ClassifiedLink) -> list[TrackSearchItem]:
+    async def expand_collection(self, link: ClassifiedLink) -> ExpandedCollection:
         """Expand playlists/albums using public page data."""
         return await asyncio.to_thread(self._collection_sync, link)
 
@@ -74,16 +74,16 @@ class SpotifyProvider:
             album=album,
         )
 
-    def _collection_sync(self, link: ClassifiedLink) -> list[TrackSearchItem]:
+    def _collection_sync(self, link: ClassifiedLink) -> ExpandedCollection:
         """Return track items from a public playlist or album page."""
-        tracks = self.public_scraper.collection(link.url)
-        if not tracks:
+        collection = self.public_scraper.collection(link.url)
+        if not collection.tracks:
             raise ProviderError(
                 "Could not expand this Spotify collection. "
                 "Public extraction did not expose track data.",
                 retryable=False,
             )
-        return tracks
+        return collection
 
     def _best_effort_metadata_or_slug(
         self, url: str, fallback_query: str | None

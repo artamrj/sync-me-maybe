@@ -7,6 +7,16 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+## 0.9.5 - 2026-06-21
+
+### Added
+
+- Added playlist and album folder storage using `Owner - Collection Name` when collection metadata is available.
+
+### Changed
+
+- Bumped `pyproject.toml`, `uv.lock`, and package `__version__` from `0.9.1` to `0.9.5`.
+
 ## 0.9.1 - 2026-06-21
 
 ### Fixed

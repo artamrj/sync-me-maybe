@@ -8,7 +8,7 @@ import pytest
 from sync_me_maybe.config import Settings
 from sync_me_maybe.music.collections import CollectionResolveError, CollectionResolver
 from sync_me_maybe.music.providers.apple import AppleMusicProvider
-from sync_me_maybe.music.providers.base import ProviderError, TrackSearchItem
+from sync_me_maybe.music.providers.base import ExpandedCollection, ProviderError, TrackSearchItem
 from sync_me_maybe.music.providers.common import (
     clean_slug,
     int_or_none,
@@ -146,13 +146,15 @@ async def test_apple_and_shazam_slug_resolution_and_numeric_fetch() -> None:
 async def test_collection_providers_expand_or_raise() -> None:
     spotify = SpotifyProvider()
     apple = AppleMusicProvider()
-    with patch.object(spotify.public_scraper, "collection", return_value=[TrackSearchItem("Song")]):
-        assert await spotify.expand_collection(
-            classify_url("https://open.spotify.com/playlist/abc")
+    collection = ExpandedCollection([TrackSearchItem("Song")], owner="Owner", title="Playlist")
+    with patch.object(spotify.public_scraper, "collection", return_value=collection):
+        assert (
+            await spotify.expand_collection(classify_url("https://open.spotify.com/playlist/abc"))
+            == collection
         )
     with (
-        patch.object(apple, "_catalog_collection", return_value=[]),
-        patch.object(apple.public_scraper, "collection", return_value=[]),
+        patch.object(apple, "_catalog_collection", return_value=ExpandedCollection([])),
+        patch.object(apple.public_scraper, "collection", return_value=ExpandedCollection([])),
     ):
         with pytest.raises(ProviderError, match="Could not expand"):
             await apple.expand_collection(
@@ -203,12 +205,14 @@ def test_apple_playlist_catalog_expansion_follows_pagination() -> None:
             "https://music.apple.com/de/playlist/all/pl.test?l=en"
         )
 
-    assert tracks == [
+    assert tracks.tracks == [
         TrackSearchItem("First", "Artist", "Album", 1, "https://music.apple.com/song/1"),
         TrackSearchItem("Second", "Artist", "Album", 2, "https://music.apple.com/song/2"),
         TrackSearchItem("Third", "Other", "Album", 3, "https://music.apple.com/song/3"),
         TrackSearchItem("Fourth", "Other", "Album", 4, "https://music.apple.com/song/4"),
     ]
+    assert tracks.owner is None
+    assert tracks.title is None
     assert get.call_args_list[2].args[0] == (
         "https://amp-api.music.apple.com/v1/catalog/de/playlists/pl.test?l=en-DE&include=tracks"
     )
@@ -244,7 +248,7 @@ def test_apple_catalog_expansion_preserves_duplicate_songs() -> None:
     with patch("sync_me_maybe.music.providers.apple.requests.get", side_effect=responses):
         tracks = provider._catalog_collection("https://music.apple.com/us/playlist/all/pl.test")
 
-    assert tracks == [
+    assert tracks.tracks == [
         TrackSearchItem("Same", "Artist", "Album", 1, "https://music.apple.com/song/1"),
         TrackSearchItem("Same", "Artist", "Album", 2, "https://music.apple.com/song/2"),
     ]
@@ -293,7 +297,7 @@ async def test_youtube_playlist_entry_conversion() -> None:
             classify_url("https://youtube.com/playlist?list=abc")
         )
 
-    assert tracks == [TrackSearchItem("First Song", "Artist", None, 1, "https://youtu.be/1")]
+    assert tracks.tracks == [TrackSearchItem("First Song", "Artist", None, 1, "https://youtu.be/1")]
 
 
 def test_public_scraper_reads_json_scripts_balanced_objects_and_dedupes() -> None:
@@ -311,11 +315,11 @@ def test_public_scraper_reads_json_scripts_balanced_objects_and_dedupes() -> Non
 
     scraper = PublicCollectionScraper()
     with (
-        patch.object(scraper, "yt_dlp_entries", return_value=[]),
+        patch.object(scraper, "yt_dlp_collection", return_value=ExpandedCollection([])),
         patch("sync_me_maybe.music.providers.public_scrape.requests.get", return_value=response),
     ):
         tracks = scraper.collection("https://open.spotify.com/playlist/abc")
-    assert tracks == [TrackSearchItem("Song", "Artist", "Album", 2, None)]
+    assert tracks.tracks == [TrackSearchItem("Song", "Artist", "Album", 2, None)]
 
     assert balanced_object('x {"tracks":[{"title":"A"}]} y', 2) == '{"tracks":[{"title":"A"}]}'
     assert extract_balanced_json_objects('x {"trackName":"B","artistName":"A"}')
@@ -357,10 +361,12 @@ async def test_collection_resolver_enforces_scope_empty_and_limit() -> None:
     with pytest.raises(CollectionResolveError, match="not a playlist"):
         await resolver.expand(classify_url("https://open.spotify.com/track/abc"))
 
-    provider.expand_collection.return_value = []
+    provider.expand_collection.return_value = ExpandedCollection([])
     with pytest.raises(CollectionResolveError, match="No tracks found"):
         await resolver.expand(link)
 
-    provider.expand_collection.return_value = [TrackSearchItem("One"), TrackSearchItem("Two")]
+    provider.expand_collection.return_value = ExpandedCollection(
+        [TrackSearchItem("One"), TrackSearchItem("Two")]
+    )
     with pytest.raises(CollectionResolveError, match="MAX_COLLECTION_TRACKS=1"):
         await resolver.expand(link)

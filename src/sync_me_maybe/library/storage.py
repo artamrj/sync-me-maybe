@@ -17,6 +17,8 @@ class TrackInfo:
     artist: str | None = None
     album: str | None = None
     track_number: int | None = None
+    collection_owner: str | None = None
+    collection_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,13 @@ def track_destination(music_dir: Path, info: TrackInfo, extension: str = ".mp3")
     title = sanitize_filename(info.title, "Unknown Title")
     suffix = extension if extension.startswith(".") else f".{extension}"
     stem = f"{artist} - {title}" if artist else title
+    collection_title = sanitize_filename(info.collection_title, "")
+    if collection_title:
+        collection_owner = sanitize_filename(info.collection_owner, "")
+        folder = (
+            f"{collection_owner} - {collection_title}" if collection_owner else collection_title
+        )
+        return music_dir / folder / f"{stem}{suffix}"
 
     return music_dir / f"{stem}{suffix}"
 

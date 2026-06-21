@@ -84,6 +84,26 @@ def test_track_and_upload_destinations_use_safe_library_layout(tmp_path: Path) -
     assert track_destination(tmp_path, info) == tmp_path / "Artist - Song.mp3"
     missing_artist = TrackInfo(title="Song", artist=None, album="Album", track_number=3)
     assert track_destination(tmp_path, missing_artist) == tmp_path / "Song.mp3"
+    collection = TrackInfo(
+        title="Song",
+        artist="Artist",
+        collection_owner="Owner",
+        collection_title="Playlist",
+    )
+    assert (
+        track_destination(tmp_path, collection) == tmp_path / "Owner - Playlist/Artist - Song.mp3"
+    )
+    missing_owner = TrackInfo(title="Song", artist="Artist", collection_title="Playlist")
+    assert track_destination(tmp_path, missing_owner) == tmp_path / "Playlist/Artist - Song.mp3"
+    unsafe_collection = TrackInfo(
+        title="Song",
+        artist="Artist",
+        collection_owner="Own/er",
+        collection_title="Play:list?",
+    )
+    assert track_destination(tmp_path, unsafe_collection) == (
+        tmp_path / "Own_er - Play_list_/Artist - Song.mp3"
+    )
     assert upload_destination(tmp_path, "folder/bad?.flac") == tmp_path / "folder_bad_.flac"
 
 

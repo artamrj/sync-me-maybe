@@ -588,7 +588,8 @@ async def process_collection_job(
             )
         if request_cancelled(request):
             return
-        tracks = await runtime.collection_resolver.expand(classified)
+        collection = await runtime.collection_resolver.expand(classified)
+        tracks = collection.tracks
         if request_cancelled(request):
             return
     except CollectionResolveError as exc:
@@ -634,6 +635,8 @@ async def process_collection_job(
                 artist=track.artist,
                 album=track.album,
                 track_number=track.track_number,
+                collection_owner=collection.owner,
+                collection_title=collection.title,
             )
             child = QueuedJob(
                 kind=JobKind.LINK,
@@ -697,6 +700,8 @@ async def process_collection_job(
             artist=track.artist,
             album=track.album,
             track_number=track.track_number,
+            collection_owner=collection.owner,
+            collection_title=collection.title,
         )
         child = QueuedJob(
             kind=JobKind.LINK,

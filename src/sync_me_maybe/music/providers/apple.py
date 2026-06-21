@@ -15,7 +15,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 import requests
 
 from sync_me_maybe.music.filenames import clean_title
-from sync_me_maybe.music.providers.base import ProviderError, ResolvedTrack, TrackSearchItem
+from sync_me_maybe.music.providers.base import (
+    ExpandedCollection,
+    ProviderError,
+    ResolvedTrack,
+    TrackSearchItem,
+)
 from sync_me_maybe.music.providers.common import clean_slug, int_or_none, slug_query
 from sync_me_maybe.music.providers.public_scrape import PublicCollectionScraper
 from sync_me_maybe.music.urls import ClassifiedLink, LinkKind, LinkScope
@@ -31,6 +36,7 @@ class AppleCollectionRef:
     storefront: str
     collection_id: str
     language: str | None
+    scope: LinkScope
 
 
 class AppleMusicProvider:
@@ -72,33 +78,33 @@ class AppleMusicProvider:
             title=query,
         )
 
-    async def expand_collection(self, link: ClassifiedLink) -> list[TrackSearchItem]:
+    async def expand_collection(self, link: ClassifiedLink) -> ExpandedCollection:
         """Expand albums/playlists using public metadata extraction."""
         return await asyncio.to_thread(self._collection_sync, link)
 
-    def _collection_sync(self, link: ClassifiedLink) -> list[TrackSearchItem]:
+    def _collection_sync(self, link: ClassifiedLink) -> ExpandedCollection:
         """Return track items from a public Apple Music collection page."""
         try:
-            tracks = self._catalog_collection(link.url)
+            collection = self._catalog_collection(link.url)
         except ProviderError:
-            tracks = []
-        if tracks:
-            return tracks
+            collection = ExpandedCollection([])
+        if collection.tracks:
+            return collection
 
-        tracks = self.public_scraper.collection(link.url)
-        if not tracks:
+        collection = self.public_scraper.collection(link.url)
+        if not collection.tracks:
             raise ProviderError(
                 "Could not expand this Apple Music collection. "
                 "Public extraction did not expose track data.",
                 retryable=False,
             )
-        return tracks
+        return collection
 
-    def _catalog_collection(self, url: str) -> list[TrackSearchItem]:
+    def _catalog_collection(self, url: str) -> ExpandedCollection:
         """Expand Apple Music playlists through the paginated catalog API."""
         ref = self._collection_ref(url)
         if not ref:
-            return []
+            return ExpandedCollection([])
         token = self._developer_token()
         headers = {
             "Accept": "application/json",
@@ -108,23 +114,35 @@ class AppleMusicProvider:
             "User-Agent": "Mozilla/5.0",
         }
         language = ref.language or "en"
+        collection_type = "albums" if ref.scope == LinkScope.ALBUM else "playlists"
+        include = "tracks" if ref.scope == LinkScope.PLAYLIST else "tracks"
         next_url: str | None = (
-            f"{APPLE_API_BASE}/v1/catalog/{ref.storefront}/playlists/"
-            f"{ref.collection_id}?l={language}&include=tracks"
+            f"{APPLE_API_BASE}/v1/catalog/{ref.storefront}/{collection_type}/"
+            f"{ref.collection_id}?l={language}&include={include}"
         )
         tracks: list[TrackSearchItem] = []
+        owner: str | None = None
+        title: str | None = None
         while next_url:
             data = self._apple_json(next_url, headers)
-            page_tracks, next_path = self._catalog_tracks_page(data)
+            page_tracks, next_path, page_owner, page_title = self._catalog_tracks_page(data)
             tracks.extend(page_tracks)
+            owner = owner or page_owner
+            title = title or page_title
             next_url = f"{APPLE_API_BASE}{next_path}" if next_path else None
-        return tracks
+        return ExpandedCollection(tracks=tracks, owner=owner, title=title)
 
     def _collection_ref(self, url: str) -> AppleCollectionRef | None:
         """Parse storefront, playlist/album id, and language from an Apple URL."""
         parsed = urlparse(url)
         parts = [unquote(part) for part in parsed.path.split("/") if part]
         if len(parts) < 4:
+            return None
+        if "playlist" in parts:
+            scope = LinkScope.PLAYLIST
+        elif "album" in parts:
+            scope = LinkScope.ALBUM
+        else:
             return None
         storefront = parts[0].lower()
         collection_id = parts[-1]
@@ -135,7 +153,7 @@ class AppleMusicProvider:
         language = raw_language.replace("_", "-") if raw_language else None
         if language and "-" not in language:
             language = f"{language}-{storefront.upper()}"
-        return AppleCollectionRef(storefront, collection_id, language)
+        return AppleCollectionRef(storefront, collection_id, language, scope)
 
     def _developer_token(self) -> str:
         """Read the public MusicKit developer token from Apple Music web assets."""
@@ -186,15 +204,25 @@ class AppleMusicProvider:
 
     def _catalog_tracks_page(
         self, data: dict[str, Any]
-    ) -> tuple[list[TrackSearchItem], str | None]:
+    ) -> tuple[list[TrackSearchItem], str | None, str | None, str | None]:
         """Convert either an initial playlist page or a paginated tracks page."""
         items = data.get("data")
         if not isinstance(items, list):
-            return [], None
+            return [], None, None, None
 
         page_items: list[Any]
         next_path: str | None
-        if items and isinstance(items[0], dict) and items[0].get("type") == "playlists":
+        owner: str | None = None
+        title: str | None = None
+        if items and isinstance(items[0], dict) and items[0].get("type") in {"albums", "playlists"}:
+            attributes = items[0].get("attributes")
+            attributes = attributes if isinstance(attributes, dict) else {}
+            title = clean_title(attributes.get("name"))
+            owner = clean_title(
+                attributes.get("artistName")
+                or attributes.get("curatorName")
+                or attributes.get("name")
+            )
             relationships = items[0].get("relationships")
             relationships = relationships if isinstance(relationships, dict) else {}
             tracks = relationships.get("tracks")
@@ -208,7 +236,12 @@ class AppleMusicProvider:
             data_next = data.get("next")
             next_path = data_next if isinstance(data_next, str) else None
 
-        return [track for item in page_items if (track := self._catalog_track(item))], next_path
+        return (
+            [track for item in page_items if (track := self._catalog_track(item))],
+            next_path,
+            owner,
+            title,
+        )
 
     def _catalog_track(self, item: Any) -> TrackSearchItem | None:
         """Convert one Apple catalog song item into a queueable search item."""

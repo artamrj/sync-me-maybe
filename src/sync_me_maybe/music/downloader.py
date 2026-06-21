@@ -145,7 +145,14 @@ def _track_info(info: dict[str, Any], resolved: ResolvedTrack) -> TrackInfo:
     if title and not resolved.title:
         title = _strip_youtube_noise(title)
 
-    return TrackInfo(title=title, artist=artist, album=album, track_number=track_number)
+    return TrackInfo(
+        title=title,
+        artist=artist,
+        album=album,
+        track_number=track_number,
+        collection_owner=resolved.collection_owner,
+        collection_title=resolved.collection_title,
+    )
 
 
 def _string(value: Any) -> str | None:

@@ -15,8 +15,8 @@ from bs4 import BeautifulSoup
 
 from sync_me_maybe.music.filenames import clean_title
 from sync_me_maybe.music.providers.base import (
+    ExpandedCollection,
     ResolvedTrack,
-    TrackSearchItem,
     unsupported_collection,
 )
 from sync_me_maybe.music.providers.common import clean_slug, slug_query, usable_slug_query
@@ -45,7 +45,7 @@ class ShazamProvider:
         """Resolve Shazam metadata without blocking the Telegram event loop."""
         return await asyncio.to_thread(self._resolve_track_sync, link)
 
-    async def expand_collection(self, link: ClassifiedLink) -> list[TrackSearchItem]:
+    async def expand_collection(self, link: ClassifiedLink) -> ExpandedCollection:
         """Shazam collection expansion is not supported by this bot."""
         raise unsupported_collection()
 

@@ -23,6 +23,8 @@ class ResolvedTrack:
     artist: str | None = None
     album: str | None = None
     track_number: int | None = None
+    collection_owner: str | None = None
+    collection_title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,15 @@ class TrackSearchItem:
     def search_query(self) -> str:
         """Build a provider-neutral YouTube Music search query."""
         return " ".join(part for part in [self.artist, self.title] if part)
+
+
+@dataclass(frozen=True)
+class ExpandedCollection:
+    """Tracks plus best-effort display metadata for a playlist or album."""
+
+    tracks: list[TrackSearchItem]
+    owner: str | None = None
+    title: str | None = None
 
 
 class ProviderError(RuntimeError):
@@ -67,7 +78,7 @@ class Provider(Protocol):
     async def resolve_track(self, link: ClassifiedLink) -> ResolvedTrack:
         raise NotImplementedError
 
-    async def expand_collection(self, link: ClassifiedLink) -> list[TrackSearchItem]:
+    async def expand_collection(self, link: ClassifiedLink) -> ExpandedCollection:
         raise NotImplementedError
 
 

@@ -10,7 +10,7 @@ import yt_dlp
 from bs4 import BeautifulSoup
 
 from sync_me_maybe.music.filenames import clean_title
-from sync_me_maybe.music.providers.base import ProviderError, TrackSearchItem
+from sync_me_maybe.music.providers.base import ExpandedCollection, ProviderError, TrackSearchItem
 from sync_me_maybe.music.providers.common import int_or_none
 
 
@@ -20,14 +20,14 @@ class PublicCollectionScraper:
     def __init__(self, timeout_seconds: int = 20) -> None:
         self.timeout_seconds = timeout_seconds
 
-    def collection(self, url: str) -> list[TrackSearchItem]:
+    def collection(self, url: str) -> ExpandedCollection:
         """Try yt-dlp metadata first, then fall back to HTML/JSON scraping."""
-        tracks = self.yt_dlp_entries(url)
-        if tracks:
-            return tracks
+        collection = self.yt_dlp_collection(url)
+        if collection.tracks:
+            return collection
         return self.html_entries(url)
 
-    def yt_dlp_entries(self, url: str) -> list[TrackSearchItem]:
+    def yt_dlp_collection(self, url: str) -> ExpandedCollection:
         """Ask yt-dlp for flat collection metadata without downloading media."""
         options: dict[str, Any] = {
             "extract_flat": "in_playlist",
@@ -40,10 +40,26 @@ class PublicCollectionScraper:
             with yt_dlp.YoutubeDL(options) as ydl:
                 info = ydl.extract_info(url, download=False)
         except Exception:  # noqa: BLE001 - public metadata extraction is best-effort.
-            return []
-        return tracks_from_entries((info or {}).get("entries") or [])
+            return ExpandedCollection([])
+        return ExpandedCollection(
+            tracks_from_entries((info or {}).get("entries") or []),
+            owner=clean_title(
+                (info or {}).get("uploader")
+                or (info or {}).get("channel")
+                or (info or {}).get("creator")
+            ),
+            title=clean_title(
+                (info or {}).get("playlist_title")
+                or (info or {}).get("title")
+                or (info or {}).get("album")
+            ),
+        )
 
-    def html_entries(self, url: str) -> list[TrackSearchItem]:
+    def yt_dlp_entries(self, url: str) -> list[TrackSearchItem]:
+        """Return only yt-dlp track entries for tests and legacy call sites."""
+        return self.yt_dlp_collection(url).tracks
+
+    def html_entries(self, url: str) -> ExpandedCollection:
         """Scrape embedded JSON from public HTML pages."""
         try:
             response = requests.get(
@@ -78,7 +94,28 @@ class PublicCollectionScraper:
         tracks: list[TrackSearchItem] = []
         for root in json_roots:
             tracks.extend(walk_track_items(root))
-        return dedupe_tracks(tracks)
+        return ExpandedCollection(
+            dedupe_tracks(tracks),
+            owner=clean_title(
+                meta(soup, "music:musician")
+                or meta(soup, "music:creator")
+                or meta(soup, "og:site_name")
+            ),
+            title=clean_title(
+                meta(soup, "og:title") or (soup.title.string if soup.title else None)
+            ),
+        )
+
+
+def meta(soup: BeautifulSoup, property_name: str) -> str | None:
+    """Read one meta tag value from a BeautifulSoup document."""
+    tag = soup.find("meta", attrs={"property": property_name}) or soup.find(
+        "meta", attrs={"name": property_name}
+    )
+    if not tag:
+        return None
+    content = tag.get("content")
+    return str(content) if content else None
 
 
 def artists(artists_value: Any) -> str | None:

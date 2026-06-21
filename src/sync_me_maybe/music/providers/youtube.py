@@ -11,6 +11,7 @@ import yt_dlp
 from sync_me_maybe.config import Settings
 from sync_me_maybe.music.filenames import clean_title
 from sync_me_maybe.music.providers.base import (
+    ExpandedCollection,
     ProviderError,
     ResolvedTrack,
     TrackSearchItem,
@@ -44,13 +45,13 @@ class YouTubeProvider:
         """Use YouTube links directly because yt-dlp can download them."""
         return ResolvedTrack(source_url=link.url, download_url=link.url)
 
-    async def expand_collection(self, link: ClassifiedLink) -> list[TrackSearchItem]:
+    async def expand_collection(self, link: ClassifiedLink) -> ExpandedCollection:
         """Read a playlist as metadata-only entries in a worker thread."""
         if link.scope == LinkScope.TRACK:
             raise unsupported_collection()
         return await asyncio.to_thread(self._playlist_sync, link.url)
 
-    def _playlist_sync(self, url: str) -> list[TrackSearchItem]:
+    def _playlist_sync(self, url: str) -> ExpandedCollection:
         """Extract playlist entries without downloading media."""
         options: dict[str, Any] = {
             "extract_flat": "in_playlist",
@@ -83,4 +84,8 @@ class YouTubeProvider:
                     source_url=entry.get("url") or entry.get("webpage_url"),
                 )
             )
-        return tracks
+        return ExpandedCollection(
+            tracks=tracks,
+            owner=clean_title((info or {}).get("uploader") or (info or {}).get("channel")),
+            title=clean_title((info or {}).get("title") or (info or {}).get("playlist_title")),
+        )
