@@ -164,8 +164,9 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
             paths=["a.mp3", "b.mp3"],
         )
     )
-    assert "2 stored/skipped path" in request_text
-    assert "a.mp3" in request_text
+    assert "📂 Results" not in request_text
+    assert "stored/skipped path" not in request_text
+    assert "a.mp3" not in request_text
     assert "Now:" not in request_text
 
     active_playlist = render_request(
@@ -181,12 +182,20 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
         )
     )
     assert "⬇️ Downloading ·" not in active_playlist
-    assert "Playlist: femme" in active_playlist
+    assert "Playlist name: femme" in active_playlist
+    assert "Playlist: femme" not in active_playlist
     assert "By: Valeria Gershannik" in active_playlist
+    assert "██░░░░░░░░ 25%" in active_playlist
+    assert "\n\n✅ 1 saved" in active_playlist
     assert "✅ 1 saved" in active_playlist
     assert "⏳ 3 left" in active_playlist
     assert "Queue: active" in active_playlist
     assert "Track: Mumford & Sons - White Blank Page" in active_playlist
+
+    active_album = render_request(
+        RequestView(title="Apple Music album", stage=StatusStage.QUEUED, collection_title="Album")
+    )
+    assert "Album name: Album" in active_album
 
     title_only_playlist = render_request(
         RequestView(
@@ -196,7 +205,7 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
         )
     )
     assert "🧩 Finding tracks..." in title_only_playlist
-    assert "Playlist: femme" in title_only_playlist
+    assert "Playlist name: femme" in title_only_playlist
     assert "By:" not in title_only_playlist
 
     upload_request = render_request(

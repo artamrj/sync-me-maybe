@@ -143,7 +143,7 @@ def render_request(view: RequestView) -> str:
     ]
     collection_label = _collection_label(view.title)
     if view.collection_title and collection_label:
-        lines.append(f"{collection_label}: {view.collection_title}")
+        lines.append(f"{collection_label} name: {view.collection_title}")
     if view.collection_owner:
         lines.append(f"By: {view.collection_owner}")
     if len(lines) > 3:
@@ -151,6 +151,7 @@ def render_request(view: RequestView) -> str:
     lines.extend(
         [
             progress_bar(done, view.total),
+            "",
             render_counters(view.total, view.completed, view.skipped, view.failed),
         ]
     )
@@ -164,12 +165,6 @@ def render_request(view: RequestView) -> str:
     if view.detail and view.detail != view.current:
         prefix = "Problem" if view.stage == StatusStage.FAILED else "Note"
         lines.append(f"{prefix}: {view.detail}")
-    if view.paths and done >= view.total:
-        lines.extend(["", f"📂 Results: {len(view.paths)} stored/skipped path(s)"])
-        for path in view.paths[:3]:
-            lines.append(f"• {path}")
-        if len(view.paths) > 3:
-            lines.append(f"• ...and {len(view.paths) - 3} more")
     return "\n".join(lines)
 
 

@@ -7,6 +7,8 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+## 0.9.6 - 2026-06-21
+
 ### Added
 
 - Added a final Telegram `Skipped/failed details` button that sends duplicate and failure details
@@ -24,6 +26,9 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 - Improved Telegram progress text with clearer counters, active item labels, and playlist/album
   metadata when available.
+- Removed the final inline paths block from Telegram status text; paths remain available through
+  buttons where applicable.
+- Bumped `pyproject.toml`, `uv.lock`, and package `__version__` from `0.9.5` to `0.9.6`.
 
 ## 0.9.5 - 2026-06-21
 

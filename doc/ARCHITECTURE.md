@@ -863,7 +863,7 @@ Message handling:
 6. The queue worker serially processes jobs.
 7. Status message is edited as work progresses.
 8. Final files are moved to `MUSIC_DIR`.
-9. Final status shows stored/skipped path counts and optional path buttons.
+9. Final status stays compact and exposes paths, issue details, and reruns through optional buttons.
 
 Shutdown:
 

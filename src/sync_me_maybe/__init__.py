@@ -1,3 +1,3 @@
 """sync-me-maybe Telegram music bot."""
 
-__version__ = "0.9.5"
+__version__ = "0.9.6"
