@@ -152,6 +152,7 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
         source_url="https://example.com",
         relative_path="a.mp3",
         path_callback_data="path:1",
+        issue_callback_data="issues:1",
         refresh_callback_data="refresh:1",
         cancel_callback_data="cancel:1",
         include_health=True,
@@ -163,5 +164,6 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
         "⛔ Stop",
         "🔄 Refresh",
         "📍 Show path",
+        "🧾 Skipped/failed details",
         "🩺 Health",
     ]

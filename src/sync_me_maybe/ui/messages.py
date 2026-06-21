@@ -173,6 +173,7 @@ def status_keyboard(
     source_url: str | None = None,
     relative_path: str | None = None,
     path_callback_data: str | None = None,
+    issue_callback_data: str | None = None,
     refresh_callback_data: str | None = None,
     cancel_callback_data: str | None = None,
     include_health: bool = False,
@@ -189,6 +190,10 @@ def status_keyboard(
     if relative_path:
         action_row.append(
             InlineKeyboardButton("📍 Show path", callback_data=path_callback_data or "path")
+        )
+    if issue_callback_data:
+        action_row.append(
+            InlineKeyboardButton("🧾 Skipped/failed details", callback_data=issue_callback_data)
         )
     if action_row:
         rows.append(action_row)

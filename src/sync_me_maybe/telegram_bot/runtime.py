@@ -21,6 +21,18 @@ from sync_me_maybe.ui.messages import StatusStage
 
 
 @dataclass
+class RequestIssueDetail:
+    """Skipped or failed item detail shown from a final status button."""
+
+    status: str
+    label: str
+    source_url: str | None = None
+    path: str | None = None
+    reason: str | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
 class RequestState:
     """User-visible request status shared by queue jobs and callbacks."""
 
@@ -37,6 +49,7 @@ class RequestState:
     detail: str | None = None
     stage: StatusStage = StatusStage.QUEUED
     paths: list[str] = field(default_factory=list)
+    issue_details: list[RequestIssueDetail] = field(default_factory=list)
     job_ids: list[str] = field(default_factory=list)
     cancelled: bool = False
     cancel_event: threading.Event = field(default_factory=threading.Event)
@@ -92,6 +105,7 @@ class BotRuntime:
         # Callback data in Telegram buttons must be short, so paths are remembered
         # in memory and buttons carry only generated tokens.
         self.path_callbacks: dict[str, str] = {}
+        self.issue_callbacks: dict[str, str] = {}
         self.queue = DownloadQueue()
         self.resolver = LinkResolver()
         self.collection_resolver = CollectionResolver(settings)
@@ -116,6 +130,12 @@ class BotRuntime:
         self.path_callbacks[token] = relative_path
         return f"path:{token}"
 
+    def remember_issue_details(self, request: RequestState) -> str:
+        """Store formatted skipped/failed details for later callback delivery."""
+        token = uuid4().hex[:16]
+        self.issue_callbacks[token] = render_issue_details(request.issue_details)
+        return f"issues:{token}"
+
     async def process_job(self, job: QueuedJob, application: Application) -> None:
         """Dispatch queued work to the handler module that owns that job kind."""
         # Imports stay inside the method to avoid circular imports: handlers need
@@ -136,3 +156,46 @@ class BotRuntime:
             await process_collection_job(job, self, application)
             return
         raise RuntimeError(f"Unknown job kind: {job.kind}")
+
+
+def render_issue_details(details: list[RequestIssueDetail]) -> str:
+    """Render skipped/failed details for a normal Telegram chat message."""
+    lines = ["Skipped/failed details"]
+    for index, detail in enumerate(details, start=1):
+        lines.extend(["", f"{index}. {detail.status.upper()} - {detail.label}"])
+        if detail.reason:
+            lines.append(f"Reason: {detail.reason}")
+        if detail.source_url:
+            lines.append(f"Source: {detail.source_url}")
+        for key, value in detail.metadata.items():
+            lines.append(f"{key}: {value}")
+        if detail.path:
+            lines.append(f"Path: {detail.path}")
+    return "\n".join(lines)
+
+
+def issue_metadata_from_track(track: object | None) -> dict[str, str]:
+    """Extract useful display metadata from resolved/downloaded track objects."""
+    metadata: dict[str, str] = {}
+    field_labels = (
+        ("title", "Title"),
+        ("artist", "Artist"),
+        ("album", "Album"),
+        ("track_number", "Track"),
+        ("search_query", "Search"),
+        ("collection_owner", "Collection owner"),
+        ("collection_title", "Collection title"),
+    )
+    for attr, label in field_labels:
+        value = getattr(track, attr, None)
+        if value is not None and str(value):
+            metadata[label] = str(value)
+    owner = metadata.pop("Collection owner", None)
+    title = metadata.pop("Collection title", None)
+    if owner and title:
+        metadata["Collection"] = f"{owner} - {title}"
+    elif title:
+        metadata["Collection"] = title
+    elif owner:
+        metadata["Collection"] = owner
+    return metadata

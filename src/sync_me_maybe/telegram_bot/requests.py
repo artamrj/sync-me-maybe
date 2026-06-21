@@ -56,6 +56,11 @@ def request_keyboard(runtime: BotRuntime, request: RequestState):
         source_url=source_url,
         relative_path=relative_path,
         path_callback_data=runtime.remember_path(relative_path) if relative_path else None,
+        issue_callback_data=(
+            runtime.remember_issue_details(request)
+            if is_terminal and request.issue_details
+            else None
+        ),
         refresh_callback_data=None if is_terminal else f"refresh:{request.id}",
         cancel_callback_data=None if is_terminal else f"cancel:{request.id}",
     )

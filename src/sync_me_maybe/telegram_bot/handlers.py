@@ -31,7 +31,14 @@ from sync_me_maybe.telegram_bot.requests import (
     request_keyboard,
     update_request,
 )
-from sync_me_maybe.telegram_bot.runtime import BotRuntime, BufferedLink, LinkBatch, RequestState
+from sync_me_maybe.telegram_bot.runtime import (
+    BotRuntime,
+    BufferedLink,
+    LinkBatch,
+    RequestIssueDetail,
+    RequestState,
+    issue_metadata_from_track,
+)
 from sync_me_maybe.telegram_bot.safe_api import (
     safe_chat_action,
     safe_edit_message,
@@ -165,6 +172,7 @@ async def buffer_link_request(
             detail=detail,
             source_urls=[link.classified_link.url for link in buffered_links],
         )
+        add_unsupported_details(request, unsupported)
         runtime.requests[request_id] = request
         batch = LinkBatch(key=key, request=request, links=buffered_links, unsupported=unsupported)
         runtime.link_batches[key] = batch
@@ -177,6 +185,7 @@ async def buffer_link_request(
         batch.request.current = f"{len(batch.links)} link(s) queued"
         batch.request.detail = "\n".join(batch.unsupported) if batch.unsupported else None
         batch.request.source_urls.extend(link.classified_link.url for link in buffered_links)
+        add_unsupported_details(batch.request, unsupported)
         if batch.flush_task:
             batch.flush_task.cancel()
 
@@ -209,6 +218,7 @@ async def enqueue_buffered_link_batch(
     batch.request.failed = len(batch.unsupported)
     batch.request.current = f"{len(batch.links)} link(s) queued"
     batch.request.detail = "\n".join(batch.unsupported) if batch.unsupported else None
+    add_unsupported_details(batch.request, batch.unsupported)
     for request_index, buffered in enumerate(batch.links, start=1):
         classified = buffered.classified_link
         source = (
@@ -239,6 +249,49 @@ async def enqueue_buffered_link_batch(
 def link_batch_title(count: int) -> str:
     """Render a compact title for one or more queued music links."""
     return "Music link" if count == 1 else f"{count} music link(s)"
+
+
+def add_unsupported_details(request: RequestState, unsupported: list[str]) -> None:
+    """Record unsupported links as failed issue details once per reason."""
+    known = {
+        (detail.status, detail.label, detail.reason)
+        for detail in request.issue_details
+        if detail.status == "failed"
+    }
+    for reason in unsupported:
+        item = ("failed", "Unsupported link", reason)
+        if item in known:
+            continue
+        request.issue_details.append(
+            RequestIssueDetail(status="failed", label="Unsupported link", reason=reason)
+        )
+        known.add(item)
+
+
+def add_link_issue_detail(
+    request: RequestState,
+    job: QueuedJob,
+    status: str,
+    *,
+    path: str | None = None,
+    reason: str | None = None,
+    resolved: object | None = None,
+    downloaded_info: object | None = None,
+) -> None:
+    """Record skipped/failed detail for one link job."""
+    request.issue_details.append(
+        RequestIssueDetail(
+            status=status,
+            label=job.display_title or job.source_label,
+            source_url=job.classified_link.url if job.classified_link else None,
+            path=path,
+            reason=reason,
+            metadata={
+                **issue_metadata_from_track(resolved),
+                **issue_metadata_from_track(downloaded_info),
+            },
+        )
+    )
 
 
 async def enqueue_link(
@@ -383,6 +436,7 @@ async def enqueue_link_batch(
         detail=detail,
         source_urls=[classified.url for _, classified in classified_links],
     )
+    add_unsupported_details(request, unsupported)
     runtime.requests[request_id] = request
 
     for request_index, (link_index, classified) in enumerate(classified_links, start=1):
@@ -431,6 +485,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
     request = job_request(runtime, job)
     if request_cancelled(request):
         return
+    resolved: ResolvedTrack | None = None
     try:
         await safe_chat_action(bot, job.chat_id, ChatAction.TYPING)
         if request:
@@ -502,6 +557,9 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
                 request.failed += 1
                 request.current = job.display_title or job.source_label
                 request.detail = str(exc)
+                add_link_issue_detail(
+                    request, job, "failed", reason=str(exc), resolved=resolved
+                )
                 await update_request(runtime, application, request)
         else:
             await safe_edit_message(
@@ -522,6 +580,13 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
             request.failed += 1
             request.current = job.display_title or job.source_label
             request.detail = f"Download failed: {exc}"
+            add_link_issue_detail(
+                request,
+                job,
+                "failed",
+                reason=f"Download failed: {exc}",
+                resolved=resolved,
+            )
             await update_request(runtime, application, request)
         else:
             await safe_edit_message(
@@ -539,6 +604,14 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         # status.
         if result.skipped:
             request.skipped += 1
+            add_link_issue_detail(
+                request,
+                job,
+                "skipped",
+                path=result.relative_path,
+                resolved=resolved,
+                downloaded_info=downloaded.info,
+            )
         else:
             request.completed += 1
         request.paths.append(result.relative_path)
@@ -600,6 +673,14 @@ async def process_collection_job(
             request.failed += 1
             request.current = job.display_title or source
             request.detail = str(exc)
+            request.issue_details.append(
+                RequestIssueDetail(
+                    status="failed",
+                    label=job.display_title or source,
+                    source_url=classified.url,
+                    reason=str(exc),
+                )
+            )
             await update_request(runtime, application, request)
         else:
             await safe_edit_message(

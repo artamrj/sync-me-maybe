@@ -7,6 +7,11 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+### Added
+
+- Added a final Telegram `Skipped/failed details` button that sends duplicate and failure details
+  for finished requests.
+
 ## 0.9.5 - 2026-06-21
 
 ### Added

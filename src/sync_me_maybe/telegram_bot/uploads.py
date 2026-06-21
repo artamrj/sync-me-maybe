@@ -29,7 +29,13 @@ from sync_me_maybe.telegram_bot.requests import (
     request_keyboard,
     update_request,
 )
-from sync_me_maybe.telegram_bot.runtime import BotRuntime, BufferedUpload, RequestState, UploadBatch
+from sync_me_maybe.telegram_bot.runtime import (
+    BotRuntime,
+    BufferedUpload,
+    RequestIssueDetail,
+    RequestState,
+    UploadBatch,
+)
 from sync_me_maybe.telegram_bot.safe_api import (
     safe_chat_action,
     safe_edit_message,
@@ -262,6 +268,9 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
         if request:
             request.skipped += 1
             request.paths.append(relative_path)
+            request.issue_details.append(
+                RequestIssueDetail(status="skipped", label=filename, path=relative_path)
+            )
             set_upload_request_stage(request)
             await update_request(runtime, application, request)
         else:
@@ -321,6 +330,13 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
                 request.stage = StatusStage.FAILED
                 request.failed += 1
                 request.detail = f"Upload failed: {exc}"
+                request.issue_details.append(
+                    RequestIssueDetail(
+                        status="failed",
+                        label=filename,
+                        reason=f"Upload failed: {exc}",
+                    )
+                )
                 await update_request(runtime, application, request)
         else:
             await safe_edit_message(
@@ -331,6 +347,9 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
     if request:
         if result.skipped:
             request.skipped += 1
+            request.issue_details.append(
+                RequestIssueDetail(status="skipped", label=filename, path=result.relative_path)
+            )
         else:
             request.completed += 1
         request.paths.append(result.relative_path)

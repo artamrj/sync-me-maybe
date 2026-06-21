@@ -6,8 +6,11 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from sync_me_maybe.telegram_bot.requests import update_request
+from sync_me_maybe.telegram_bot.safe_api import safe_send_message
 from sync_me_maybe.telegram_bot.runtime import BotRuntime
 from sync_me_maybe.ui.messages import StatusStage
+
+DETAIL_MESSAGE_LIMIT = 3900
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -46,6 +49,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
+    if data.startswith("issues:"):
+        token = data.removeprefix("issues:")
+        details = runtime.issue_callbacks.get(token)
+        if not details:
+            await query.answer("Details are no longer available in memory.", show_alert=True)
+            return
+        message = update.effective_message or query.message
+        if not message:
+            await query.answer("Cannot find chat for details.", show_alert=True)
+            return
+        chat_id = message.chat_id
+        for chunk in split_telegram_message(details):
+            await safe_send_message(context.application.bot, chat_id, chunk)
+        await query.answer("Sent details.")
+        return
+
     if data.startswith("refresh:"):
         request_id = data.removeprefix("refresh:")
         request = runtime.requests.get(request_id)
@@ -82,3 +101,31 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     await query.answer()
+
+
+def split_telegram_message(text: str, limit: int = DETAIL_MESSAGE_LIMIT) -> list[str]:
+    """Split text into Telegram-safe chunks, preferring line boundaries."""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in text.splitlines():
+        line_len = len(line) + (1 if current else 0)
+        if current and current_len + line_len > limit:
+            chunks.append("\n".join(current))
+            current = [line]
+            current_len = len(line)
+            continue
+        if len(line) > limit:
+            if current:
+                chunks.append("\n".join(current))
+                current = []
+                current_len = 0
+            chunks.extend(line[index : index + limit] for index in range(0, len(line), limit))
+            continue
+        current.append(line)
+        current_len += line_len
+    if current:
+        chunks.append("\n".join(current))
+    return chunks

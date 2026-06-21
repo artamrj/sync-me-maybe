@@ -32,7 +32,13 @@ from sync_me_maybe.telegram_bot.requests import (
     request_position,
     update_request,
 )
-from sync_me_maybe.telegram_bot.runtime import BotRuntime, BufferedUpload, RequestState, UploadBatch
+from sync_me_maybe.telegram_bot.runtime import (
+    BotRuntime,
+    BufferedUpload,
+    RequestIssueDetail,
+    RequestState,
+    UploadBatch,
+)
 from sync_me_maybe.telegram_bot.safe_api import (
     safe_edit_message,
     safe_send_message,
@@ -104,6 +110,27 @@ async def test_request_helpers_position_keyboard_update_and_cancel(
     assert await request_position(runtime, request) == 1
     keyboard = request_keyboard(runtime, request)
     assert keyboard is not None
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert "⛔ Stop" in labels
+    assert "🔄 Refresh" in labels
+    assert "🧾 Skipped/failed details" not in labels
+
+    request.stage = StatusStage.DONE
+    request.completed = 2
+    keyboard = request_keyboard(runtime, request)
+    assert keyboard is not None
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert "⛔ Stop" not in labels
+    assert "🔄 Refresh" not in labels
+    assert "🧾 Skipped/failed details" not in labels
+
+    request.completed = 1
+    request.failed = 1
+    request.issue_details.append(RequestIssueDetail("failed", "Song", reason="broken"))
+    keyboard = request_keyboard(runtime, request)
+    assert keyboard is not None
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert "🧾 Skipped/failed details" in labels
     await update_request(runtime, fake_application, request)
     fake_application.bot.edit_message_text.assert_awaited()
 
@@ -120,7 +147,12 @@ async def test_callbacks_answer_health_path_refresh_cancel(
 ) -> None:
     query = SimpleNamespace(data="path:t", answer=AsyncMock())
     runtime.path_callbacks["t"] = "Artist/Song.mp3"
-    update = SimpleNamespace(effective_user=SimpleNamespace(id=42), callback_query=query)
+    callback_message = SimpleNamespace(chat_id=1)
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        effective_message=callback_message,
+        callback_query=query,
+    )
     context = SimpleNamespace(application=fake_application)
 
     await handle_callback(update, context)
@@ -129,6 +161,19 @@ async def test_callbacks_answer_health_path_refresh_cancel(
     query.data = "health"
     await handle_callback(update, context)
     assert query.answer.await_args.args[0].startswith("Health ok")
+
+    runtime.issue_callbacks["i"] = "Skipped/failed details\n\n1. FAILED - Song"
+    query.data = "issues:i"
+    await handle_callback(update, context)
+    fake_application.bot.send_message.assert_awaited()
+    assert "FAILED - Song" in fake_application.bot.send_message.await_args.kwargs["text"]
+    assert query.answer.await_args.args == ("Sent details.",)
+
+    query.data = "issues:missing"
+    await handle_callback(update, context)
+    query.answer.assert_awaited_with(
+        "Details are no longer available in memory.", show_alert=True
+    )
 
     request = RequestState("r1", 1, 10, "Request", 1)
     runtime.requests[request.id] = request
@@ -203,6 +248,8 @@ async def test_enqueue_link_batch_records_unsupported_failures(
     snapshot = await runtime.queue.snapshot()
     assert request.total == 3
     assert request.failed == 1
+    assert request.issue_details[0].status == "failed"
+    assert request.issue_details[0].reason == "Link 2 unsupported"
     assert len(request.job_ids) == 2
     assert [job.kind for job in snapshot.pending] == [JobKind.LINK, JobKind.COLLECTION]
 
@@ -280,11 +327,57 @@ async def test_process_link_job_success_failure_and_retry(
     assert request.stage == StatusStage.DONE
     assert request.completed == 1
     assert request.paths == ["Artist - Song.mp3"]
+    assert request.issue_details == []
+
+    skip_request = RequestState("r-skip", 1, 11, "youtube", 1)
+    runtime.requests[skip_request.id] = skip_request
+    skip_job = QueuedJob(
+        JobKind.LINK,
+        1,
+        2,
+        11,
+        42,
+        "youtube",
+        classified_link=classified,
+        request_id=skip_request.id,
+    )
+    skip_request.job_ids.append(skip_job.id)
+    duplicate = runtime.settings.download_tmp_dir / "duplicate.mp3"
+    duplicate.write_text("audio", encoding="utf-8")
+    runtime.resolver.resolve = AsyncMock(
+        return_value=ResolvedTrack("src", "download", title="Song", artist="Artist")
+    )
+    runtime.downloader.download = AsyncMock(
+        return_value=DownloadedTrack(duplicate, TrackInfo("Song", "Artist"))
+    )
+    await process_link_job(skip_job, runtime, fake_application)
+    assert skip_request.skipped == 1
+    assert skip_request.issue_details[0].status == "skipped"
+    assert skip_request.issue_details[0].path == "Artist - Song.mp3"
+    assert skip_request.issue_details[0].metadata["Title"] == "Song"
 
     failing = QueuedJob(JobKind.LINK, 1, 2, 10, 42, "youtube", classified_link=classified)
     runtime.resolver.resolve = AsyncMock(side_effect=DownloadError("permanent", retryable=False))
     await process_link_job(failing, runtime, fake_application)
     assert "permanent" in fake_application.bot.edit_message_text.await_args.kwargs["text"]
+
+    failed_request = RequestState("r-fail", 1, 13, "youtube", 1)
+    runtime.requests[failed_request.id] = failed_request
+    failing_with_request = QueuedJob(
+        JobKind.LINK,
+        1,
+        2,
+        13,
+        42,
+        "youtube",
+        classified_link=classified,
+        request_id=failed_request.id,
+    )
+    runtime.resolver.resolve = AsyncMock(side_effect=DownloadError("permanent", retryable=False))
+    await process_link_job(failing_with_request, runtime, fake_application)
+    assert failed_request.failed == 1
+    assert failed_request.issue_details[0].status == "failed"
+    assert failed_request.issue_details[0].reason == "permanent"
 
     retry_job = QueuedJob(JobKind.LINK, 1, 2, 10, 42, "youtube", classified_link=classified)
     with pytest.raises(Exception) as exc:
@@ -510,6 +603,9 @@ async def test_process_upload_job_skip_success_failure_and_retry(
     await process_upload_job(skip_job, runtime, fake_application)
     assert request.skipped == 1
     assert request.paths == ["song.mp3"]
+    assert request.issue_details[0].status == "skipped"
+    assert request.issue_details[0].label == "song.mp3"
+    assert request.issue_details[0].path == "song.mp3"
 
     request2 = RequestState("r2", 1, 12, "upload", 1)
     runtime.requests[request2.id] = request2
@@ -535,6 +631,25 @@ async def test_process_upload_job_skip_success_failure_and_retry(
     await process_upload_job(success_job, runtime, fake_application)
     assert request2.completed == 1
     assert (runtime.settings.music_dir / "new.mp3").exists()
+
+    failed_request = RequestState("r3", 1, 14, "upload", 1)
+    runtime.requests[failed_request.id] = failed_request
+    failed_job = QueuedJob(
+        JobKind.UPLOAD,
+        1,
+        2,
+        14,
+        42,
+        "failed.mp3",
+        request_id=failed_request.id,
+        upload=UploadPayload("file3", "unique3", "failed.mp3"),
+    )
+    fake_application.bot.get_file.side_effect = DownloadError("permanent", retryable=False)
+    await process_upload_job(failed_job, runtime, fake_application)
+    assert failed_request.failed == 1
+    assert failed_request.issue_details[0].status == "failed"
+    assert failed_request.issue_details[0].reason == "Upload failed: permanent"
+    fake_application.bot.get_file.side_effect = None
 
     with pytest.raises(Exception) as exc:
         await retry_upload_job(
