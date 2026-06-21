@@ -654,7 +654,7 @@ async def process_collection_job(
         if request:
             request.stage = StatusStage.EXPANDING
             request.current = job.display_title or source
-            request.detail = "Detecting tracks."
+            request.detail = None
             await update_request(runtime, application, request)
         else:
             await safe_edit_message(
@@ -699,8 +699,10 @@ async def process_collection_job(
         # tracks are known, the request total grows to include every child track.
         request.total += max(len(tracks) - 1, 0)
         request.stage = StatusStage.QUEUED
-        request.current = f"{len(tracks)} track(s) detected"
+        request.current = f"{len(tracks)} tracks found"
         request.detail = None
+        request.collection_owner = collection.owner
+        request.collection_title = collection.title
         await update_request(runtime, application, request)
 
         for index, track in enumerate(tracks, start=1):

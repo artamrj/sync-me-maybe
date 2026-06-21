@@ -20,6 +20,11 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 - Fixed collection folder naming so URL-like owners are ignored and ownerless collections fall
   back to `Collection(<collection URL>)`.
 
+### Changed
+
+- Improved Telegram progress text with clearer counters, active item labels, and playlist/album
+  metadata when available.
+
 ## 0.9.5 - 2026-06-21
 
 ### Added

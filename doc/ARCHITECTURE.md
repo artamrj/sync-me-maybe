@@ -187,6 +187,8 @@ Important `RequestState` fields:
 - `failed`: count of failed jobs.
 - `current`: current item or status detail.
 - `detail`: extra error or progress detail.
+- `collection_title`: playlist or album title shown in status messages when known.
+- `collection_owner`: playlist or album owner shown in status messages when known.
 - `stage`: current `StatusStage`.
 - `paths`: stored/skipped relative paths.
 - `issue_details`: skipped and failed details shown from final status buttons.

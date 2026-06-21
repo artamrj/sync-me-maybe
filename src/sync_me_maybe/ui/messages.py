@@ -36,6 +36,8 @@ class RequestView:
     queue_position: int | None = None
     detail: str | None = None
     paths: list[str] = field(default_factory=list)
+    collection_title: str | None = None
+    collection_owner: str | None = None
 
 
 def render_welcome(authorized: bool) -> str:
@@ -101,7 +103,7 @@ def render_collection_progress(
     """Render progress for collection expansion and child track processing."""
     lines = [StatusStage.EXPANDING.value, "", f"🎼 Source: {source}"]
     if total is None:
-        lines.append("Status: detecting tracks")
+        lines.append("Finding tracks...")
     else:
         done = completed + skipped + failed
         lines.extend(
@@ -128,30 +130,40 @@ def progress_bar(done: int, total: int, width: int = 10) -> str:
 def render_counters(total: int, completed: int, skipped: int, failed: int) -> str:
     """Render stored/skipped/failed/waiting counters."""
     waiting = max(total - completed - skipped - failed, 0)
-    return f"✅ {completed} stored  ⏭️ {skipped} skipped  ❌ {failed} failed  ⏳ {waiting} queued"
+    return f"✅ {completed} saved  ⏭️ {skipped} skipped  ❌ {failed} failed  ⏳ {waiting} left"
 
 
 def render_request(view: RequestView) -> str:
     """Render the aggregate request status used for batches and collections."""
     done = view.completed + view.skipped + view.failed
-    active_detail = view.current or view.detail
     lines = [
         f"🎧 {view.title}",
-        _status_line(view, active_detail),
+        _status_line(view),
         "",
-        progress_bar(done, view.total),
-        "",
-        render_counters(view.total, view.completed, view.skipped, view.failed),
     ]
+    collection_label = _collection_label(view.title)
+    if view.collection_title and collection_label:
+        lines.append(f"{collection_label}: {view.collection_title}")
+    if view.collection_owner:
+        lines.append(f"By: {view.collection_owner}")
+    if len(lines) > 3:
+        lines.append("")
+    lines.extend(
+        [
+            progress_bar(done, view.total),
+            render_counters(view.total, view.completed, view.skipped, view.failed),
+        ]
+    )
     if view.queue_position is not None:
         if view.queue_position == 0:
             lines.append("Queue: active")
         else:
             lines.append(f"Queue: #{view.queue_position}")
     if view.current:
-        lines.extend(["", f"Now: {view.current}"])
+        lines.extend(["", f"{_active_label(view)}: {view.current}"])
     if view.detail and view.detail != view.current:
-        lines.append(view.detail)
+        prefix = "Problem" if view.stage == StatusStage.FAILED else "Note"
+        lines.append(f"{prefix}: {view.detail}")
     if view.paths and done >= view.total:
         lines.extend(["", f"📂 Results: {len(view.paths)} stored/skipped path(s)"])
         for path in view.paths[:3]:
@@ -161,11 +173,27 @@ def render_request(view: RequestView) -> str:
     return "\n".join(lines)
 
 
-def _status_line(view: RequestView, active_detail: str | None) -> str:
-    """Include the active item in the headline for multi-item requests."""
-    if view.total > 1 and active_detail:
-        return f"{view.stage.value} · {active_detail}"
+def _status_line(view: RequestView) -> str:
+    """Render the primary status without duplicating the active item."""
+    if view.stage == StatusStage.EXPANDING:
+        return "🧩 Finding tracks..."
     return view.stage.value
+
+
+def _collection_label(title: str) -> str | None:
+    normalized = title.casefold()
+    if "playlist" in normalized:
+        return "Playlist"
+    if "album" in normalized:
+        return "Album"
+    return None
+
+
+def _active_label(view: RequestView) -> str:
+    title = view.title.casefold()
+    if "upload" in title:
+        return "Item"
+    return "Track"
 
 
 def status_keyboard(

@@ -49,6 +49,8 @@ class RequestState:
     failed: int = 0
     current: str | None = None
     detail: str | None = None
+    collection_title: str | None = None
+    collection_owner: str | None = None
     stage: StatusStage = StatusStage.QUEUED
     paths: list[str] = field(default_factory=list)
     issue_details: list[RequestIssueDetail] = field(default_factory=list)

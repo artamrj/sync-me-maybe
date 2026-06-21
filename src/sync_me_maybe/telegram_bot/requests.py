@@ -36,6 +36,8 @@ async def render_request_text(runtime: BotRuntime, request: RequestState) -> str
             queue_position=await request_position(runtime, request),
             detail=request.detail,
             paths=request.paths,
+            collection_title=request.collection_title,
+            collection_owner=request.collection_owner,
         )
     )
 

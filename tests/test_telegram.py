@@ -467,6 +467,8 @@ async def test_process_collection_job_enqueues_child_tracks(
     await process_collection_job(job, runtime, fake_application)
     snapshot = await runtime.queue.snapshot()
     assert request.total == 2
+    assert request.collection_owner == "Owner"
+    assert request.collection_title == "Playlist"
     assert len(snapshot.pending) == 2
     assert snapshot.pending[0].resolved_track.search_query == "Artist One"
     assert snapshot.pending[0].resolved_track.collection_owner == "Owner"

@@ -152,7 +152,7 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
     assert "Queue: #2" in render_status(StatusStage.QUEUED, "spotify", "detail", position=2)
     assert "Path: Artist/Song.mp3" in render_success("Artist/Song.mp3")
     assert "Failed" in render_error("broken")
-    assert "Tracks: 2" in render_collection_progress("playlist", total=2, queued=2)
+    assert "2 left" in render_collection_progress("playlist", total=2, queued=2)
 
     request_text = render_request(
         RequestView(
@@ -166,6 +166,43 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
     )
     assert "2 stored/skipped path" in request_text
     assert "a.mp3" in request_text
+    assert "Now:" not in request_text
+
+    active_playlist = render_request(
+        RequestView(
+            title="Spotify playlist",
+            stage=StatusStage.DOWNLOADING,
+            total=4,
+            completed=1,
+            current="Mumford & Sons - White Blank Page",
+            queue_position=0,
+            collection_title="femme",
+            collection_owner="Valeria Gershannik",
+        )
+    )
+    assert "⬇️ Downloading ·" not in active_playlist
+    assert "Playlist: femme" in active_playlist
+    assert "By: Valeria Gershannik" in active_playlist
+    assert "✅ 1 saved" in active_playlist
+    assert "⏳ 3 left" in active_playlist
+    assert "Queue: active" in active_playlist
+    assert "Track: Mumford & Sons - White Blank Page" in active_playlist
+
+    title_only_playlist = render_request(
+        RequestView(
+            title="Spotify playlist",
+            stage=StatusStage.EXPANDING,
+            collection_title="femme",
+        )
+    )
+    assert "🧩 Finding tracks..." in title_only_playlist
+    assert "Playlist: femme" in title_only_playlist
+    assert "By:" not in title_only_playlist
+
+    upload_request = render_request(
+        RequestView(title="Telegram upload", stage=StatusStage.DOWNLOADING, current="song.mp3")
+    )
+    assert "Item: song.mp3" in upload_request
 
     keyboard = status_keyboard(
         source_url="https://example.com",
