@@ -83,6 +83,7 @@ def fake_application(runtime: BotRuntime) -> SimpleNamespace:
     bot = SimpleNamespace(
         send_message=AsyncMock(),
         send_sticker=AsyncMock(),
+        delete_message=AsyncMock(),
         edit_message_text=AsyncMock(),
         send_chat_action=AsyncMock(),
         get_file=AsyncMock(),

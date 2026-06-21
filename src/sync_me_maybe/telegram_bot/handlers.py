@@ -43,6 +43,7 @@ from sync_me_maybe.telegram_bot.runtime import (
 )
 from sync_me_maybe.telegram_bot.safe_api import (
     safe_chat_action,
+    safe_delete_message,
     safe_edit_message,
     safe_edit_status,
     safe_send_message,
@@ -173,7 +174,9 @@ async def buffer_link_request(
         request_id = uuid4().hex
         title = link_batch_title(len(buffered_links))
         detail = "\n".join(unsupported) if unsupported else None
-        await send_received_sticker(runtime, application, message.chat_id, message.message_id)
+        sticker_message = await send_received_sticker(
+            runtime, application, message.chat_id, message.message_id
+        )
         status_message = await message.reply_text(
             render_request(
                 RequestView(
@@ -188,6 +191,7 @@ async def buffer_link_request(
             reply_to_message_id=message.message_id,
             allow_sending_without_reply=True,
         )
+        await delete_temporary_sticker(application, message.chat_id, sticker_message)
         request = RequestState(
             id=request_id,
             chat_id=message.chat_id,
@@ -327,15 +331,25 @@ def job_track_label(job: QueuedJob, resolved: object | None = None) -> str:
 
 async def send_received_sticker(
     runtime: BotRuntime, application: Application, chat_id: int, reply_to_message_id: int
-) -> None:
+) -> object | None:
     """Send the optional received sticker configured for instant acknowledgements."""
-    await safe_send_sticker(
+    return await safe_send_sticker(
         application.bot,
         chat_id,
         runtime.settings.received_sticker_id,
         reply_to_message_id=reply_to_message_id,
         allow_sending_without_reply=True,
     )
+
+
+async def delete_temporary_sticker(
+    application: Application, chat_id: int, sticker_message: object | None
+) -> None:
+    """Remove the temporary acknowledgement sticker after the status message exists."""
+    message_id = getattr(sticker_message, "message_id", 0)
+    if not isinstance(message_id, int):
+        return
+    await safe_delete_message(application.bot, chat_id, message_id)
 
 
 def add_unsupported_details(request: RequestState, unsupported: list[str]) -> None:
@@ -395,7 +409,9 @@ async def enqueue_link(
     detail = f"Link {link_index} of {link_total}" if link_total > 1 else None
     request_id = uuid4().hex
     title = classified.kind.value
-    await send_received_sticker(runtime, application, message.chat_id, message.message_id)
+    sticker_message = await send_received_sticker(
+        runtime, application, message.chat_id, message.message_id
+    )
     status_message = await message.reply_text(
         render_request(
             RequestView(
@@ -408,6 +424,7 @@ async def enqueue_link(
         reply_to_message_id=message.message_id,
         allow_sending_without_reply=True,
     )
+    await delete_temporary_sticker(application, message.chat_id, sticker_message)
     # A RequestState owns the user-facing Telegram status message; the QueuedJob
     # below owns the actual work item processed by the background queue.
     request = RequestState(
@@ -465,7 +482,9 @@ async def enqueue_collection(
     detail = f"Link {link_index} of {link_total}" if link_total > 1 else None
     source = f"{classified.kind.value} {classified.scope.value}"
     request_id = uuid4().hex
-    await send_received_sticker(runtime, application, message.chat_id, message.message_id)
+    sticker_message = await send_received_sticker(
+        runtime, application, message.chat_id, message.message_id
+    )
     status_message = await message.reply_text(
         render_request(
             RequestView(
@@ -478,6 +497,7 @@ async def enqueue_collection(
         reply_to_message_id=message.message_id,
         allow_sending_without_reply=True,
     )
+    await delete_temporary_sticker(application, message.chat_id, sticker_message)
     request = RequestState(
         id=request_id,
         chat_id=message.chat_id,
@@ -529,7 +549,9 @@ async def enqueue_link_batch(
     request_id = uuid4().hex
     title = f"{len(classified_links)} music link(s)"
     detail = "\n".join(unsupported) if unsupported else None
-    await send_received_sticker(runtime, application, message.chat_id, message.message_id)
+    sticker_message = await send_received_sticker(
+        runtime, application, message.chat_id, message.message_id
+    )
     status_message = await message.reply_text(
         render_request(
             RequestView(
@@ -548,6 +570,7 @@ async def enqueue_link_batch(
         reply_to_message_id=message.message_id,
         allow_sending_without_reply=True,
     )
+    await delete_temporary_sticker(application, message.chat_id, sticker_message)
     request = RequestState(
         id=request_id,
         chat_id=message.chat_id,

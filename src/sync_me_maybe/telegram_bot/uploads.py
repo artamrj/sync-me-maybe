@@ -40,6 +40,7 @@ from sync_me_maybe.telegram_bot.runtime import (
 )
 from sync_me_maybe.telegram_bot.safe_api import (
     safe_chat_action,
+    safe_delete_message,
     safe_edit_message,
     safe_edit_status,
     safe_send_sticker,
@@ -114,7 +115,9 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
     batch = runtime.upload_batches.get(key)
     if not batch:
         request_id = uuid4().hex
-        await send_received_sticker(runtime, application, message.chat_id, message.message_id)
+        sticker_message = await send_received_sticker(
+            runtime, application, message.chat_id, message.message_id
+        )
         status_message = await message.reply_text(
             render_request(
                 RequestView(title="Telegram upload", stage=StatusStage.THINKING, current=filename)
@@ -122,6 +125,7 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
             reply_to_message_id=message.message_id,
             allow_sending_without_reply=True,
         )
+        await delete_temporary_sticker(application, message.chat_id, sticker_message)
         request = RequestState(
             id=request_id,
             chat_id=message.chat_id,
@@ -200,7 +204,7 @@ async def enqueue_upload_request(
     """Create and enqueue upload jobs without the delayed batch buffer."""
     first = uploads[0]
     request_id = uuid4().hex
-    await safe_send_sticker(
+    sticker_message = await safe_send_sticker(
         application.bot,
         chat_id,
         runtime.settings.received_sticker_id,
@@ -220,6 +224,7 @@ async def enqueue_upload_request(
         reply_to_message_id=original_message_id,
         allow_sending_without_reply=True,
     )
+    await delete_temporary_sticker(application, chat_id, sticker_message)
     request = RequestState(
         id=request_id,
         chat_id=chat_id,
@@ -264,15 +269,25 @@ def upload_job_from_buffered(
 
 async def send_received_sticker(
     runtime: BotRuntime, application: Application, chat_id: int, reply_to_message_id: int
-) -> None:
+) -> object | None:
     """Send the optional received sticker configured for instant acknowledgements."""
-    await safe_send_sticker(
+    return await safe_send_sticker(
         application.bot,
         chat_id,
         runtime.settings.received_sticker_id,
         reply_to_message_id=reply_to_message_id,
         allow_sending_without_reply=True,
     )
+
+
+async def delete_temporary_sticker(
+    application: Application, chat_id: int, sticker_message: object | None
+) -> None:
+    """Remove the temporary acknowledgement sticker after the status message exists."""
+    message_id = getattr(sticker_message, "message_id", 0)
+    if not isinstance(message_id, int):
+        return
+    await safe_delete_message(application.bot, chat_id, message_id)
 
 
 async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: Application) -> None:

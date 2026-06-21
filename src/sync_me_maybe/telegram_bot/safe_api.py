@@ -99,6 +99,17 @@ async def safe_send_sticker(
     )
 
 
+async def safe_delete_message(bot: Bot, chat_id: int, message_id: int) -> bool | None:
+    """Safely delete a temporary Telegram message."""
+    if message_id <= 0:
+        return None
+    return await telegram_call(
+        f"delete message {message_id}",
+        lambda: bot.delete_message(chat_id=chat_id, message_id=message_id),
+        attempts=2,
+    )
+
+
 async def safe_chat_action(bot: Bot, chat_id: int, action: str) -> None:
     """Send typing/upload indicators without making them critical to the job."""
     await telegram_call(

@@ -41,6 +41,7 @@ from sync_me_maybe.telegram_bot.runtime import (
     UploadBatch,
 )
 from sync_me_maybe.telegram_bot.safe_api import (
+    safe_delete_message,
     safe_edit_message,
     safe_send_message,
     safe_send_sticker,
@@ -91,6 +92,9 @@ async def test_safe_wrappers_call_expected_bot_methods(fake_application: SimpleN
     assert await safe_send_message(bot, 1, "text") == "sent"
     assert await safe_send_sticker(bot, 1, None) is None
     assert await safe_send_sticker(bot, 1, "sticker-id") == "sticker"
+    bot.delete_message.return_value = True
+    assert await safe_delete_message(bot, 1, 44) is True
+    assert await safe_delete_message(bot, 1, 0) is None
 
 
 @pytest.mark.asyncio
@@ -318,12 +322,14 @@ async def test_received_sticker_is_sent_only_when_configured(
     runtime = BotRuntime(replace(runtime.settings, received_sticker_id="sticker-id"))
     fake_application.bot_data["runtime"] = runtime
     fake_context.application = fake_application
+    fake_application.bot.send_sticker.return_value = SimpleNamespace(message_id=44)
     fake_message.text = "https://youtu.be/abc"
 
     await handle_message(fake_update, fake_context)
 
     fake_application.bot.send_sticker.assert_awaited_once()
     assert fake_application.bot.send_sticker.await_args.kwargs["sticker"] == "sticker-id"
+    fake_application.bot.delete_message.assert_awaited_once_with(chat_id=1, message_id=44)
     assert "📥 Received" not in fake_message.reply_text.await_args.args[0]
 
 

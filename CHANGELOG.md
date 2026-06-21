@@ -7,6 +7,17 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+## 0.10.2 - 2026-06-22
+
+### Fixed
+
+- Made the received sticker act as a temporary acknowledgement that is deleted once the first
+  Telegram status message is sent, so the status message becomes the lasting UI.
+
+### Changed
+
+- Bumped `pyproject.toml`, `uv.lock`, and package `__version__` from `0.10.1` to `0.10.2`.
+
 ## 0.10.1 - 2026-06-22
 
 ### Fixed
