@@ -166,6 +166,23 @@ async def test_collection_providers_expand_or_raise() -> None:
         )
 
 
+def test_spotify_collection_falls_back_to_embed_page() -> None:
+    provider = SpotifyProvider()
+    link = classify_url("https://open.spotify.com/playlist/abc?si=token")
+    original = ExpandedCollection([], owner="Owner", title="Playlist")
+    embedded = ExpandedCollection([TrackSearchItem("Song", "Artist")])
+
+    with patch.object(
+        provider.public_scraper, "collection", side_effect=[original, embedded]
+    ) as collection:
+        assert provider._collection_sync(link) == ExpandedCollection(
+            [TrackSearchItem("Song", "Artist")], owner="Owner", title="Playlist"
+        )
+
+    assert collection.call_args_list[0].args == ("https://open.spotify.com/playlist/abc?si=token",)
+    assert collection.call_args_list[1].args == ("https://open.spotify.com/embed/playlist/abc",)
+
+
 def test_apple_playlist_catalog_expansion_follows_pagination() -> None:
     provider = AppleMusicProvider()
 
@@ -331,6 +348,20 @@ def test_public_scraper_reads_json_scripts_balanced_objects_and_dedupes() -> Non
 def test_public_scraper_track_conversion_filters_non_tracks() -> None:
     assert tracks_from_entries([{"title": "Song", "uploader": "Artist"}])[0].track_number == 1
     assert track_from_dict({"name": "Page Title"}) is None
+    assert track_from_dict(
+        {
+            "entityType": "track",
+            "title": "Je suis fan",
+            "subtitle": "Alice et Moi",
+            "uri": "spotify:track:0ek3SCgTcQBeRE897H2IDp",
+        }
+    ) == TrackSearchItem(
+        title="Je suis fan",
+        artist="Alice et Moi",
+        album=None,
+        track_number=None,
+        source_url="spotify:track:0ek3SCgTcQBeRE897H2IDp",
+    )
     assert track_from_dict(
         {"@type": "MusicRecording", "name": "Song", "byArtist": {"name": "Artist"}}
     ) == TrackSearchItem(

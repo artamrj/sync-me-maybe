@@ -7,6 +7,7 @@ metadata into a YouTube Music search query.
 from __future__ import annotations
 
 import asyncio
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -29,8 +30,6 @@ class SpotifyProvider:
 
     def classify(self, url: str) -> ClassifiedLink | None:
         """Recognize Spotify track, playlist, and album URLs."""
-        from urllib.parse import urlparse
-
         parsed = urlparse(url)
         host = parsed.netloc.lower()
         if host.startswith("www."):
@@ -77,6 +76,11 @@ class SpotifyProvider:
     def _collection_sync(self, link: ClassifiedLink) -> ExpandedCollection:
         """Return track items from a public playlist or album page."""
         collection = self.public_scraper.collection(link.url)
+        if not collection.tracks:
+            embed_url = spotify_embed_url(link.url)
+            if embed_url:
+                embed_collection = self.public_scraper.collection(embed_url)
+                collection = merge_collection_metadata(embed_collection, collection)
         if not collection.tracks:
             raise ProviderError(
                 "Could not expand this Spotify collection. "
@@ -145,3 +149,29 @@ def _meta(soup: BeautifulSoup, property_name: str) -> str | None:
         return None
     content = tag.get("content")
     return str(content) if content else None
+
+
+def spotify_embed_url(url: str) -> str | None:
+    """Build the public Spotify embed URL for playlist and album pages."""
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host != "open.spotify.com":
+        return None
+
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 2 or parts[0] not in {"playlist", "album"}:
+        return None
+    return f"https://open.spotify.com/embed/{parts[0]}/{parts[1]}"
+
+
+def merge_collection_metadata(
+    primary: ExpandedCollection, fallback: ExpandedCollection
+) -> ExpandedCollection:
+    """Use fallback display metadata when the track-bearing source lacks it."""
+    return ExpandedCollection(
+        primary.tracks,
+        owner=primary.owner or fallback.owner,
+        title=primary.title or fallback.title,
+    )

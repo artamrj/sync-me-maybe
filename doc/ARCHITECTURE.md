@@ -606,7 +606,8 @@ Expansion behavior:
 - `CollectionResolver` delegates provider-specific expansion to the provider registry.
 - Empty collection and `MAX_COLLECTION_TRACKS` checks are enforced centrally here.
 - YouTube playlists are expanded with `yt-dlp` flat playlist extraction.
-- Spotify collections use public extraction.
+- Spotify collections use public extraction and retry the public embed page when the main
+  collection page does not expose tracks.
 - Apple Music collections use public extraction.
 - Shazam collections are not supported.
 

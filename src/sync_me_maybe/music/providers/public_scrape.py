@@ -176,18 +176,22 @@ def track_from_dict(value: dict[str, Any]) -> TrackSearchItem | None:
     attrs = value.get("attributes")
     attrs = attrs if isinstance(attrs, dict) else {}
     source = {**value, **attrs}
-    type_value = str(source.get("@type") or source.get("type") or "").casefold()
+    type_value = str(
+        source.get("@type") or source.get("type") or source.get("entityType") or ""
+    ).casefold()
     title = clean_title(source.get("title") or source.get("name") or source.get("trackName"))
     artist = clean_title(source.get("artistName"))
     if not artist:
         artist = artists(source.get("byArtist") or source.get("artists") or source.get("artist"))
+    if not artist and type_value == "track":
+        artist = clean_title(source.get("subtitle"))
     album = clean_title(source.get("albumName") or source.get("album"))
     track_number = int_or_none(
         source.get("trackNumber") or source.get("track_number") or source.get("position")
     )
     external_urls = source.get("external_urls")
     external_urls = external_urls if isinstance(external_urls, dict) else {}
-    url = source.get("url") or external_urls.get("spotify")
+    url = source.get("url") or external_urls.get("spotify") or source.get("uri")
 
     if not title:
         return None
