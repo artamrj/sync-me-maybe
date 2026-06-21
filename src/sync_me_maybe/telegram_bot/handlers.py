@@ -557,9 +557,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
                 request.failed += 1
                 request.current = job.display_title or job.source_label
                 request.detail = str(exc)
-                add_link_issue_detail(
-                    request, job, "failed", reason=str(exc), resolved=resolved
-                )
+                add_link_issue_detail(request, job, "failed", reason=str(exc), resolved=resolved)
                 await update_request(runtime, application, request)
         else:
             await safe_edit_message(

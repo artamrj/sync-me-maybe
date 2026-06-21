@@ -171,9 +171,7 @@ async def test_callbacks_answer_health_path_refresh_cancel(
 
     query.data = "issues:missing"
     await handle_callback(update, context)
-    query.answer.assert_awaited_with(
-        "Details are no longer available in memory.", show_alert=True
-    )
+    query.answer.assert_awaited_with("Details are no longer available in memory.", show_alert=True)
 
     request = RequestState("r1", 1, 10, "Request", 1)
     runtime.requests[request.id] = request
