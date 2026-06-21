@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from telegram import Update
 from telegram.ext import ContextTypes
 
 from sync_me_maybe.telegram_bot.requests import update_request
-from sync_me_maybe.telegram_bot.runtime import BotRuntime
+from sync_me_maybe.telegram_bot.runtime import BotRuntime, FailedJobRerun, RequestState, clone_job
 from sync_me_maybe.telegram_bot.safe_api import safe_send_message
 from sync_me_maybe.ui.messages import StatusStage
 
@@ -67,6 +69,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await query.answer("Sent details.")
         return
 
+    if data.startswith("rerun_failed:"):
+        token = data.removeprefix("rerun_failed:")
+        rerun = runtime.rerun_failed_callbacks.get(token)
+        if not rerun:
+            await query.answer(
+                "Failed retry data is no longer available in memory.", show_alert=True
+            )
+            return
+        await rerun_failed_jobs(runtime, context, update, rerun)
+        await query.answer("Queued failed item(s) again.")
+        return
+
     if data.startswith("refresh:"):
         request_id = data.removeprefix("refresh:")
         request = runtime.requests.get(request_id)
@@ -103,6 +117,52 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     await query.answer()
+
+
+async def rerun_failed_jobs(
+    runtime: BotRuntime,
+    context: ContextTypes.DEFAULT_TYPE,
+    update: Update,
+    rerun: FailedJobRerun,
+) -> None:
+    """Create a new request and enqueue clones of previously failed jobs."""
+    failed_jobs = rerun.jobs
+    first = failed_jobs[0]
+    chat = getattr(update, "effective_chat", None)
+    chat_id = chat.id if chat else first.chat_id
+    message = await context.application.bot.send_message(
+        chat_id=chat_id,
+        text="Queueing failed item(s) again...",
+        reply_to_message_id=first.original_message_id,
+        allow_sending_without_reply=True,
+    )
+    request = RequestState(
+        id=uuid4().hex,
+        chat_id=chat_id,
+        status_message_id=message.message_id,
+        title=f"Rerun failed: {rerun.title}",
+        total=len(failed_jobs),
+        source_urls=[
+            job.classified_link.url
+            for job in failed_jobs
+            if job.classified_link and job.classified_link.url
+        ],
+    )
+    runtime.requests[request.id] = request
+    for index, failed_job in enumerate(failed_jobs, start=1):
+        job = clone_job(
+            failed_job,
+            chat_id=chat_id,
+            status_message_id=request.status_message_id,
+            request_id=request.id,
+            request_status_message_id=request.status_message_id,
+            request_total=len(failed_jobs),
+            request_index=index,
+            display_title=failed_job.display_title or failed_job.source_label,
+        )
+        await runtime.queue.enqueue(job)
+        request.job_ids.append(job.id)
+    await update_request(runtime, context.application, request)
 
 
 def split_telegram_message(text: str, limit: int = DETAIL_MESSAGE_LIMIT) -> list[str]:

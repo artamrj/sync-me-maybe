@@ -61,6 +61,9 @@ def request_keyboard(runtime: BotRuntime, request: RequestState):
             if is_terminal and request.issue_details
             else None
         ),
+        rerun_failed_callback_data=(
+            runtime.remember_failed_jobs(request) if is_terminal and request.failed_jobs else None
+        ),
         refresh_callback_data=None if is_terminal else f"refresh:{request.id}",
         cancel_callback_data=None if is_terminal else f"cancel:{request.id}",
     )

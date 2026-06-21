@@ -174,6 +174,7 @@ def status_keyboard(
     relative_path: str | None = None,
     path_callback_data: str | None = None,
     issue_callback_data: str | None = None,
+    rerun_failed_callback_data: str | None = None,
     refresh_callback_data: str | None = None,
     cancel_callback_data: str | None = None,
     include_health: bool = False,
@@ -194,6 +195,10 @@ def status_keyboard(
     if issue_callback_data:
         action_row.append(
             InlineKeyboardButton("🧾 Skipped/failed details", callback_data=issue_callback_data)
+        )
+    if rerun_failed_callback_data:
+        action_row.append(
+            InlineKeyboardButton("🔁 Rerun failed", callback_data=rerun_failed_callback_data)
         )
     if action_row:
         rows.append(action_row)

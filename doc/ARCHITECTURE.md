@@ -189,7 +189,9 @@ Important `RequestState` fields:
 - `detail`: extra error or progress detail.
 - `stage`: current `StatusStage`.
 - `paths`: stored/skipped relative paths.
+- `issue_details`: skipped and failed details shown from final status buttons.
 - `job_ids`: queue job IDs belonging to this request.
+- `failed_jobs`: cloneable failed jobs used by the final rerun button.
 - `cancelled`: cancellation flag.
 - `cancel_event`: thread-safe event used by blocking downloader code.
 
@@ -197,6 +199,8 @@ Important `RequestState` fields:
 
 - `settings`
 - `path_callbacks`: in-memory token-to-path/result data for inline buttons.
+- `issue_callbacks`: in-memory token-to-skipped/failed details.
+- `rerun_failed_callbacks`: in-memory token-to-failed-job retry data.
 - `queue`: the global `DownloadQueue`.
 - `resolver`: `LinkResolver` for single-track links.
 - `collection_resolver`: `CollectionResolver` for playlists/albums.
@@ -378,7 +382,8 @@ Supported callback data:
 
 - `health`: run write probe against `MUSIC_DIR`.
 - `path:<token>`: show stored relative path.
-- `results:<token>`: show stored paths for a multi-item request.
+- `issues:<token>`: send skipped/failed details.
+- `rerun_failed:<token>`: create a new request for only failed jobs.
 - `refresh:<request_id>`: re-render current request status.
 - `cancel:<request_id>`: cancel pending jobs and signal active job cancellation.
 

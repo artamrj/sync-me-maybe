@@ -37,6 +37,7 @@ from sync_me_maybe.telegram_bot.runtime import (
     LinkBatch,
     RequestIssueDetail,
     RequestState,
+    clone_job,
     issue_metadata_from_track,
 )
 from sync_me_maybe.telegram_bot.safe_api import (
@@ -555,6 +556,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
             else:
                 request.stage = StatusStage.FAILED
                 request.failed += 1
+                request.failed_jobs.append(clone_job(job))
                 request.current = job.display_title or job.source_label
                 request.detail = str(exc)
                 add_link_issue_detail(request, job, "failed", reason=str(exc), resolved=resolved)
@@ -576,6 +578,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         if request:
             request.stage = StatusStage.FAILED
             request.failed += 1
+            request.failed_jobs.append(clone_job(job))
             request.current = job.display_title or job.source_label
             request.detail = f"Download failed: {exc}"
             add_link_issue_detail(
@@ -669,6 +672,7 @@ async def process_collection_job(
         if request:
             request.stage = StatusStage.FAILED
             request.failed += 1
+            request.failed_jobs.append(clone_job(job))
             request.current = job.display_title or source
             request.detail = str(exc)
             request.issue_details.append(

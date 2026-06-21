@@ -10,6 +10,7 @@ import pytest
 from telegram.error import BadRequest, RetryAfter, TelegramError, TimedOut
 
 from sync_me_maybe.library.storage import TrackInfo
+from sync_me_maybe.music.collections import CollectionResolveError
 from sync_me_maybe.music.downloader import DownloadedTrack, DownloadError
 from sync_me_maybe.music.providers.base import ExpandedCollection, TrackSearchItem
 from sync_me_maybe.music.resolver import ResolvedTrack
@@ -114,6 +115,7 @@ async def test_request_helpers_position_keyboard_update_and_cancel(
     assert "⛔ Stop" in labels
     assert "🔄 Refresh" in labels
     assert "🧾 Skipped/failed details" not in labels
+    assert "🔁 Rerun failed" not in labels
 
     request.stage = StatusStage.DONE
     request.completed = 2
@@ -123,6 +125,7 @@ async def test_request_helpers_position_keyboard_update_and_cancel(
     assert "⛔ Stop" not in labels
     assert "🔄 Refresh" not in labels
     assert "🧾 Skipped/failed details" not in labels
+    assert "🔁 Rerun failed" not in labels
 
     request.completed = 1
     request.failed = 1
@@ -131,6 +134,13 @@ async def test_request_helpers_position_keyboard_update_and_cancel(
     assert keyboard is not None
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
     assert "🧾 Skipped/failed details" in labels
+    assert "🔁 Rerun failed" not in labels
+
+    request.failed_jobs.append(job)
+    keyboard = request_keyboard(runtime, request)
+    assert keyboard is not None
+    labels = [button.text for row in keyboard.inline_keyboard for button in row]
+    assert "🔁 Rerun failed" in labels
     await update_request(runtime, fake_application, request)
     fake_application.bot.edit_message_text.assert_awaited()
 
@@ -172,6 +182,41 @@ async def test_callbacks_answer_health_path_refresh_cancel(
     query.data = "issues:missing"
     await handle_callback(update, context)
     query.answer.assert_awaited_with("Details are no longer available in memory.", show_alert=True)
+
+    failed_job = QueuedJob(
+        JobKind.LINK,
+        1,
+        2,
+        10,
+        42,
+        "failed source",
+        classified_link=classify_url("https://youtu.be/fail"),
+        request_id="old",
+        attempt=3,
+    )
+    token = "retry"
+    old_request = RequestState("old", 1, 10, "Old request", 1)
+    old_request.failed_jobs.append(failed_job)
+    callback_data = runtime.remember_failed_jobs(old_request)
+    token = callback_data.removeprefix("rerun_failed:")
+    query.data = f"rerun_failed:{token}"
+    fake_application.bot.send_message.return_value = SimpleNamespace(message_id=99)
+    await handle_callback(update, context)
+    snapshot = await runtime.queue.snapshot()
+    rerun_job = snapshot.pending[-1]
+    rerun_request = runtime.requests[rerun_job.request_id]
+    assert rerun_request.title == "Rerun failed: Old request"
+    assert rerun_request.total == 1
+    assert rerun_job.id != failed_job.id
+    assert rerun_job.attempt == 1
+    assert rerun_job.classified_link == failed_job.classified_link
+    assert query.answer.await_args.args == ("Queued failed item(s) again.",)
+
+    query.data = "rerun_failed:missing"
+    await handle_callback(update, context)
+    query.answer.assert_awaited_with(
+        "Failed retry data is no longer available in memory.", show_alert=True
+    )
 
     request = RequestState("r1", 1, 10, "Request", 1)
     runtime.requests[request.id] = request
@@ -353,6 +398,7 @@ async def test_process_link_job_success_failure_and_retry(
     assert skip_request.issue_details[0].status == "skipped"
     assert skip_request.issue_details[0].path == "Artist - Song.mp3"
     assert skip_request.issue_details[0].metadata["Title"] == "Song"
+    assert skip_request.failed_jobs == []
 
     failing = QueuedJob(JobKind.LINK, 1, 2, 10, 42, "youtube", classified_link=classified)
     runtime.resolver.resolve = AsyncMock(side_effect=DownloadError("permanent", retryable=False))
@@ -376,6 +422,8 @@ async def test_process_link_job_success_failure_and_retry(
     assert failed_request.failed == 1
     assert failed_request.issue_details[0].status == "failed"
     assert failed_request.issue_details[0].reason == "permanent"
+    assert len(failed_request.failed_jobs) == 1
+    assert failed_request.failed_jobs[0].classified_link == classified
 
     retry_job = QueuedJob(JobKind.LINK, 1, 2, 10, 42, "youtube", classified_link=classified)
     with pytest.raises(Exception) as exc:
@@ -424,6 +472,35 @@ async def test_process_collection_job_enqueues_child_tracks(
     assert snapshot.pending[0].resolved_track.collection_owner == "Owner"
     assert snapshot.pending[0].resolved_track.collection_title == "Playlist"
     assert snapshot.pending[0].resolved_track.collection_url == classified.url
+
+
+@pytest.mark.asyncio
+async def test_process_collection_job_failure_registers_rerunnable_job(
+    runtime: BotRuntime,
+    fake_application: SimpleNamespace,
+) -> None:
+    classified = classify_url("https://open.spotify.com/playlist/abc")
+    request = RequestState("r-fail-collection", 1, 10, "spotify playlist", 1)
+    runtime.requests[request.id] = request
+    job = QueuedJob(
+        JobKind.COLLECTION,
+        1,
+        2,
+        10,
+        42,
+        "playlist",
+        classified_link=classified,
+        request_id=request.id,
+    )
+    runtime.collection_resolver.expand = AsyncMock(
+        side_effect=CollectionResolveError("broken", retryable=False)
+    )
+
+    await process_collection_job(job, runtime, fake_application)
+    assert request.failed == 1
+    assert request.issue_details[0].status == "failed"
+    assert len(request.failed_jobs) == 1
+    assert request.failed_jobs[0].classified_link == classified
 
 
 @pytest.mark.asyncio
@@ -648,6 +725,8 @@ async def test_process_upload_job_skip_success_failure_and_retry(
     assert failed_request.failed == 1
     assert failed_request.issue_details[0].status == "failed"
     assert failed_request.issue_details[0].reason == "Upload failed: permanent"
+    assert len(failed_request.failed_jobs) == 1
+    assert failed_request.failed_jobs[0].upload == failed_job.upload
     fake_application.bot.get_file.side_effect = None
 
     with pytest.raises(Exception) as exc:

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import threading
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from telegram import Update
@@ -51,8 +53,17 @@ class RequestState:
     paths: list[str] = field(default_factory=list)
     issue_details: list[RequestIssueDetail] = field(default_factory=list)
     job_ids: list[str] = field(default_factory=list)
+    failed_jobs: list[QueuedJob] = field(default_factory=list)
     cancelled: bool = False
     cancel_event: threading.Event = field(default_factory=threading.Event)
+
+
+@dataclass
+class FailedJobRerun:
+    """Jobs and display context needed by a rerun-failed callback."""
+
+    title: str
+    jobs: list[QueuedJob]
 
 
 @dataclass
@@ -106,6 +117,7 @@ class BotRuntime:
         # in memory and buttons carry only generated tokens.
         self.path_callbacks: dict[str, str] = {}
         self.issue_callbacks: dict[str, str] = {}
+        self.rerun_failed_callbacks: dict[str, FailedJobRerun] = {}
         self.queue = DownloadQueue()
         self.resolver = LinkResolver()
         self.collection_resolver = CollectionResolver(settings)
@@ -135,6 +147,15 @@ class BotRuntime:
         token = uuid4().hex[:16]
         self.issue_callbacks[token] = render_issue_details(request.issue_details)
         return f"issues:{token}"
+
+    def remember_failed_jobs(self, request: RequestState) -> str:
+        """Store cloneable failed jobs for a rerun callback."""
+        token = uuid4().hex[:16]
+        self.rerun_failed_callbacks[token] = FailedJobRerun(
+            title=request.title,
+            jobs=[clone_job(job) for job in request.failed_jobs],
+        )
+        return f"rerun_failed:{token}"
 
     async def process_job(self, job: QueuedJob, application: Application) -> None:
         """Dispatch queued work to the handler module that owns that job kind."""
@@ -172,6 +193,17 @@ def render_issue_details(details: list[RequestIssueDetail]) -> str:
         if detail.path:
             lines.append(f"Path: {detail.path}")
     return "\n".join(lines)
+
+
+def clone_job(job: QueuedJob, **overrides: object) -> QueuedJob:
+    """Copy a queued job with a new ID, reset attempts, and optional overrides."""
+    cloned = copy.copy(job)
+    cloned.id = uuid4().hex
+    cloned.attempt = 1
+    cloned.enqueued_at = datetime.now(UTC)
+    for key, value in overrides.items():
+        setattr(cloned, key, value)
+    return cloned
 
 
 def issue_metadata_from_track(track: object | None) -> dict[str, str]:

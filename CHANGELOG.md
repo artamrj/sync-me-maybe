@@ -11,6 +11,7 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 - Added a final Telegram `Skipped/failed details` button that sends duplicate and failure details
   for finished requests.
+- Added a final Telegram `Rerun failed` button that queues only failed jobs again.
 
 ### Fixed
 

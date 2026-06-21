@@ -35,6 +35,7 @@ from sync_me_maybe.telegram_bot.runtime import (
     RequestIssueDetail,
     RequestState,
     UploadBatch,
+    clone_job,
 )
 from sync_me_maybe.telegram_bot.safe_api import (
     safe_chat_action,
@@ -329,6 +330,7 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
             else:
                 request.stage = StatusStage.FAILED
                 request.failed += 1
+                request.failed_jobs.append(clone_job(job))
                 request.detail = f"Upload failed: {exc}"
                 request.issue_details.append(
                     RequestIssueDetail(

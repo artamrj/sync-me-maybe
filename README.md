@@ -22,6 +22,7 @@ Spotify, Apple Music, and Shazam links are used as search inputs. The bot does n
 - Existing target files are skipped instead of overwritten.
 - Playlist and album links are expanded into individual track jobs, capped by `MAX_COLLECTION_TRACKS`.
 - Playlist and album downloads are stored under `Owner - Collection Name` folders when provider metadata exposes a real owner. If the owner is missing or looks like a URL, the folder falls back to `Collection Name(<collection URL>)`.
+- Finished Telegram requests with failed jobs show a `Rerun failed` button that queues only the failed items again.
 
 ## Setup
 
