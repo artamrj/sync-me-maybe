@@ -62,6 +62,9 @@ def test_settings_from_env_validates_required_and_numeric_values(
     assert settings.upload_batch_window_seconds == 0.5
     assert settings.log_level == "DEBUG"
 
+    monkeypatch.delenv("MAX_COLLECTION_TRACKS")
+    assert Settings.from_env().max_collection_tracks == 1000
+
 
 def test_is_allowed_requires_user_id_in_allowlist() -> None:
     assert is_allowed(42, {42})

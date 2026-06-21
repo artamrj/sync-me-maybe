@@ -150,7 +150,10 @@ async def test_collection_providers_expand_or_raise() -> None:
         assert await spotify.expand_collection(
             classify_url("https://open.spotify.com/playlist/abc")
         )
-    with patch.object(apple.public_scraper, "collection", return_value=[]):
+    with (
+        patch.object(apple, "_catalog_collection", return_value=[]),
+        patch.object(apple.public_scraper, "collection", return_value=[]),
+    ):
         with pytest.raises(ProviderError, match="Could not expand"):
             await apple.expand_collection(
                 classify_url("https://music.apple.com/us/playlist/name/pl.1")
@@ -159,6 +162,118 @@ async def test_collection_providers_expand_or_raise() -> None:
         await ShazamProvider().expand_collection(
             classify_url("https://www.shazam.com/track/1/name")
         )
+
+
+def test_apple_playlist_catalog_expansion_follows_pagination() -> None:
+    provider = AppleMusicProvider()
+
+    responses = [
+        apple_response(text='<script src="/assets/index~abc123.js"></script>'),
+        apple_response(text='const go="1";qc="token";'),
+        apple_response(
+            json_data={
+                "data": [
+                    {
+                        "type": "playlists",
+                        "relationships": {
+                            "tracks": {
+                                "data": [
+                                    apple_song("1", "First", "Artist", "Album", 1),
+                                    apple_song("2", "Second", "Artist", "Album", 2),
+                                ],
+                                "next": "/v1/catalog/de/playlists/pl.test/tracks?l=en-DE&offset=2",
+                            }
+                        },
+                    }
+                ]
+            }
+        ),
+        apple_response(
+            json_data={
+                "data": [
+                    apple_song("3", "Third", "Other", "Album", 3),
+                    apple_song("4", "Fourth", "Other", "Album", 4),
+                ]
+            }
+        ),
+    ]
+
+    with patch("sync_me_maybe.music.providers.apple.requests.get", side_effect=responses) as get:
+        tracks = provider._catalog_collection("https://music.apple.com/de/playlist/all/pl.test?l=en")
+
+    assert tracks == [
+        TrackSearchItem("First", "Artist", "Album", 1, "https://music.apple.com/song/1"),
+        TrackSearchItem("Second", "Artist", "Album", 2, "https://music.apple.com/song/2"),
+        TrackSearchItem("Third", "Other", "Album", 3, "https://music.apple.com/song/3"),
+        TrackSearchItem("Fourth", "Other", "Album", 4, "https://music.apple.com/song/4"),
+    ]
+    assert get.call_args_list[2].args[0] == (
+        "https://amp-api.music.apple.com/v1/catalog/de/playlists/pl.test"
+        "?l=en-DE&include=tracks"
+    )
+    assert get.call_args_list[3].args[0] == (
+        "https://amp-api.music.apple.com/v1/catalog/de/playlists/pl.test/tracks"
+        "?l=en-DE&offset=2"
+    )
+
+
+def test_apple_catalog_expansion_preserves_duplicate_songs() -> None:
+    provider = AppleMusicProvider()
+    responses = [
+        apple_response(text='<script src="/assets/index~abc123.js"></script>'),
+        apple_response(text='qc="token";'),
+        apple_response(
+            json_data={
+                "data": [
+                    {
+                        "type": "playlists",
+                        "relationships": {
+                            "tracks": {
+                                "data": [
+                                    apple_song("1", "Same", "Artist", "Album", 1),
+                                    apple_song("2", "Same", "Artist", "Album", 2),
+                                ]
+                            }
+                        },
+                    }
+                ]
+            }
+        ),
+    ]
+
+    with patch("sync_me_maybe.music.providers.apple.requests.get", side_effect=responses):
+        tracks = provider._catalog_collection("https://music.apple.com/us/playlist/all/pl.test")
+
+    assert tracks == [
+        TrackSearchItem("Same", "Artist", "Album", 1, "https://music.apple.com/song/1"),
+        TrackSearchItem("Same", "Artist", "Album", 2, "https://music.apple.com/song/2"),
+    ]
+
+
+def apple_song(
+    track_id: str, title: str, artist: str, album: str, track_number: int
+) -> dict[str, object]:
+    return {
+        "id": track_id,
+        "type": "songs",
+        "attributes": {
+            "name": title,
+            "artistName": artist,
+            "albumName": album,
+            "trackNumber": track_number,
+            "url": f"https://music.apple.com/song/{track_id}",
+        },
+    }
+
+
+def apple_response(
+    *, text: str = "", json_data: dict[str, object] | None = None
+) -> Mock:
+    response = Mock()
+    response.text = text
+    response.raise_for_status.return_value = None
+    response.json.return_value = json_data or {}
+    return response
 
 
 @pytest.mark.asyncio

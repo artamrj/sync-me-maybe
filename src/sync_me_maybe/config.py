@@ -48,7 +48,7 @@ class Settings:
     download_tmp_dir: Path
     ytdlp_cookies_file: Path | None = None
     max_download_seconds: int = 900
-    max_collection_tracks: int = 100
+    max_collection_tracks: int = 1000
     upload_batch_window_seconds: float = 2.0
     log_level: str = "INFO"
 
@@ -77,7 +77,7 @@ class Settings:
             max_download_seconds = int(max_seconds)
         except ValueError as exc:
             raise ConfigError("MAX_DOWNLOAD_SECONDS must be an integer") from exc
-        max_collection_tracks_raw = os.environ.get("MAX_COLLECTION_TRACKS", "100").strip()
+        max_collection_tracks_raw = os.environ.get("MAX_COLLECTION_TRACKS", "1000").strip()
         try:
             max_collection_tracks = int(max_collection_tracks_raw)
         except ValueError as exc:

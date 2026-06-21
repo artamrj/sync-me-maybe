@@ -32,7 +32,7 @@ ALLOWED_TELEGRAM_USER_IDS=123456789
 MUSIC_DIR=./music
 DOWNLOAD_TMP_DIR=./tmp/sync-me-maybe
 MAX_DOWNLOAD_SECONDS=900
-MAX_COLLECTION_TRACKS=100
+MAX_COLLECTION_TRACKS=1000
 UPLOAD_BATCH_WINDOW_SECONDS=2
 LOG_LEVEL=INFO
 ```
@@ -93,7 +93,7 @@ Tags:
 - `DOWNLOAD_TMP_DIR`: directory for temporary downloads. Defaults to `./tmp/sync-me-maybe`.
 - `YTDLP_COOKIES_FILE`: optional cookies file passed to `yt-dlp`.
 - `MAX_DOWNLOAD_SECONDS`: maximum download duration before a job fails. Defaults to `900`.
-- `MAX_COLLECTION_TRACKS`: maximum playlist or album tracks to enqueue. Defaults to `100`.
+- `MAX_COLLECTION_TRACKS`: maximum playlist or album tracks to enqueue. Defaults to `1000`.
 - `UPLOAD_BATCH_WINDOW_SECONDS`: seconds to group quickly forwarded audio uploads. Defaults to `2`; set `0` to disable batching.
 - `LOG_LEVEL`: Python logging level. Defaults to `INFO`.
 

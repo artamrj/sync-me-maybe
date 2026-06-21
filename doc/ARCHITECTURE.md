@@ -105,7 +105,7 @@ Environment variables:
 - `DOWNLOAD_TMP_DIR`: default `./tmp/sync-me-maybe`.
 - `YTDLP_COOKIES_FILE`: optional.
 - `MAX_DOWNLOAD_SECONDS`: default `900`.
-- `MAX_COLLECTION_TRACKS`: default `100`.
+- `MAX_COLLECTION_TRACKS`: default `1000`.
 - `UPLOAD_BATCH_WINDOW_SECONDS`: default `2`.
 - `LOG_LEVEL`: default `INFO`.
 
