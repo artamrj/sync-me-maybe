@@ -15,7 +15,7 @@ def build_providers(settings: Settings | None = None) -> list[Provider]:
     """Create provider adapters in classification priority order."""
     return [
         YouTubeProvider(settings),
-        SpotifyProvider(),
+        SpotifyProvider(max_collection_tracks=settings.max_collection_tracks if settings else None),
         AppleMusicProvider(),
         ShazamProvider(),
     ]

@@ -11,7 +11,7 @@ Telegram bot that downloads music links and Telegram audio uploads into a local 
 - Shazam links
 - Multiple links in one message
 
-Spotify, Apple Music, and Shazam links are used as search inputs. The bot does not bypass DRM or download directly from those providers; it resolves a matching YouTube or YouTube Music result and stores that audio. Spotify and Apple Music playlists and albums use tokenless public extraction and may fail if the public page does not expose track data.
+Spotify, Apple Music, and Shazam links are used as search inputs. The bot does not bypass DRM or download directly from those providers; it resolves a matching YouTube or YouTube Music result and stores that audio. Spotify and Apple Music playlists and albums use tokenless public extraction and may fail if the public page does not expose track data. Large Spotify playlists can page beyond the first 100 public embed tracks when Spotify exposes an anonymous public token.
 
 ## Storage Behavior
 

@@ -221,12 +221,12 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
             total=50,
             queue_position=2,
             collection_title="feels",
-            collection_owner="Romy Brunner",
+            collection_owner="Romy B",
             source_label="Spotify playlist",
         )
     )
     assert "🟡 Status     Queued" in queued_playlist
-    assert "🎵 Spotify playlist “feels” by Romy Brunner" in queued_playlist
+    assert "🎵 Spotify playlist “feels” by Romy B" in queued_playlist
     assert "⏳ Waiting in queue · position #2" in queued_playlist
     assert "📦 50 tracks detected" in queued_playlist
 

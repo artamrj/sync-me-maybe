@@ -186,7 +186,7 @@ def collection_metadata(values: list[Any]) -> tuple[str | None, str | None]:
 
 
 def collection_metadata_from_page_title(value: str | None) -> tuple[str | None, str | None]:
-    """Parse public page titles like 'feels - playlist by Romy Brunner | Spotify'."""
+    """Parse public page titles like 'feels - playlist by Romy B | Spotify'."""
     title = clean_title(value)
     if not title:
         return None, None

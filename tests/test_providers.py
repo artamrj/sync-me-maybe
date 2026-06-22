@@ -26,7 +26,7 @@ from sync_me_maybe.music.providers.public_scrape import (
     tracks_from_entries,
 )
 from sync_me_maybe.music.providers.shazam import ShazamProvider
-from sync_me_maybe.music.providers.spotify import SpotifyProvider
+from sync_me_maybe.music.providers.spotify import SpotifyProvider, track_from_spotify_playlist_item
 from sync_me_maybe.music.providers.youtube import YouTubeProvider
 from sync_me_maybe.music.resolver import LinkResolver, ResolveError
 from sync_me_maybe.music.urls import (
@@ -185,6 +185,101 @@ def test_spotify_collection_falls_back_to_embed_page() -> None:
     assert collection.call_args_list[1].args == ("https://open.spotify.com/embed/playlist/abc",)
 
 
+def test_spotify_playlist_paginates_when_embed_returns_100_tracks() -> None:
+    provider = SpotifyProvider(max_collection_tracks=1000)
+    link = classify_url("https://open.spotify.com/playlist/abc")
+    initial = ExpandedCollection(spotify_tracks(1, 100), owner="Owner", title="Playlist")
+    responses = [
+        spotify_html_response("token"),
+        spotify_json_response(spotify_page_items(1, 100), next_url="next"),
+        spotify_json_response(spotify_page_items(101, 200), next_url="next"),
+        spotify_json_response(spotify_page_items(201, 300), next_url="next"),
+        spotify_json_response(spotify_page_items(301, 400), next_url="next"),
+        spotify_json_response(spotify_page_items(401, 500), next_url="next"),
+        spotify_json_response(spotify_page_items(501, 534), next_url=None),
+    ]
+
+    with (
+        patch.object(provider.public_scraper, "collection", return_value=initial),
+        patch("sync_me_maybe.music.providers.spotify.requests.get", side_effect=responses) as get,
+    ):
+        collection = provider._collection_sync(link)
+
+    assert len(collection.tracks) == 534
+    assert collection.tracks[0] == TrackSearchItem(
+        "Song 1", "Artist 1", "Album 1", 1, "https://open.spotify.com/track/1"
+    )
+    assert collection.tracks[-1] == TrackSearchItem(
+        "Song 534", "Artist 534", "Album 534", 534, "https://open.spotify.com/track/534"
+    )
+    assert collection.owner == "Owner"
+    assert collection.title == "Playlist"
+    assert get.call_count == 7
+
+
+def test_spotify_playlist_below_100_tracks_does_not_paginate() -> None:
+    provider = SpotifyProvider()
+    link = classify_url("https://open.spotify.com/playlist/abc")
+    initial = ExpandedCollection(spotify_tracks(1, 99), owner="Owner", title="Playlist")
+
+    with (
+        patch.object(provider.public_scraper, "collection", return_value=initial),
+        patch("sync_me_maybe.music.providers.spotify.requests.get") as get,
+    ):
+        collection = provider._collection_sync(link)
+
+    assert collection == initial
+    get.assert_not_called()
+
+
+def test_spotify_playlist_pagination_dedupes_and_stops_at_configured_limit_plus_one() -> None:
+    provider = SpotifyProvider(max_collection_tracks=120)
+    link = classify_url("https://open.spotify.com/playlist/abc")
+    initial = ExpandedCollection(spotify_tracks(1, 100))
+    responses = [
+        spotify_html_response("token"),
+        spotify_json_response(spotify_page_items(1, 100), next_url="next"),
+        spotify_json_response(spotify_page_items(101, 200), next_url="next"),
+    ]
+
+    with (
+        patch.object(provider.public_scraper, "collection", return_value=initial),
+        patch("sync_me_maybe.music.providers.spotify.requests.get", side_effect=responses),
+    ):
+        collection = provider._collection_sync(link)
+
+    assert len(collection.tracks) == 121
+    assert collection.tracks[-1].title == "Song 121"
+
+
+def test_spotify_playlist_pagination_falls_back_on_api_rejection() -> None:
+    provider = SpotifyProvider(max_collection_tracks=1000)
+    link = classify_url("https://open.spotify.com/playlist/abc")
+    initial = ExpandedCollection(spotify_tracks(1, 100))
+
+    with (
+        patch.object(provider.public_scraper, "collection", return_value=initial),
+        patch(
+            "sync_me_maybe.music.providers.spotify.requests.get",
+            side_effect=[
+                spotify_html_response("token"),
+                spotify_json_response([], status_code=429),
+            ],
+        ),
+    ):
+        collection = provider._collection_sync(link)
+
+    assert collection == initial
+
+
+def test_spotify_playlist_item_parsing_handles_missing_data_safely() -> None:
+    assert track_from_spotify_playlist_item({"track": None}) is None
+    assert track_from_spotify_playlist_item({"track": {"name": ""}}) is None
+    assert track_from_spotify_playlist_item({"track": {"name": "Song"}}) == TrackSearchItem(
+        "Song", None, None, None, None
+    )
+
+
 def test_apple_playlist_catalog_expansion_follows_pagination() -> None:
     provider = AppleMusicProvider()
 
@@ -297,6 +392,57 @@ def apple_response(*, text: str = "", json_data: dict[str, object] | None = None
     return response
 
 
+def spotify_tracks(start: int, end: int) -> list[TrackSearchItem]:
+    return [
+        TrackSearchItem(
+            f"Song {index}",
+            f"Artist {index}",
+            f"Album {index}",
+            index,
+            f"https://open.spotify.com/track/{index}",
+        )
+        for index in range(start, end + 1)
+    ]
+
+
+def spotify_page_items(start: int, end: int) -> list[dict[str, object]]:
+    return [
+        {
+            "track": {
+                "name": f"Song {index}",
+                "artists": [{"name": f"Artist {index}"}],
+                "album": {"name": f"Album {index}"},
+                "track_number": index,
+                "external_urls": {"spotify": f"https://open.spotify.com/track/{index}"},
+            }
+        }
+        for index in range(start, end + 1)
+    ]
+
+
+def spotify_html_response(token: str) -> Mock:
+    response = Mock()
+    response.status_code = 200
+    response.text = (
+        '<script id="__NEXT_DATA__" type="application/json">'
+        '{"props":{"pageProps":{"state":{"settings":{"session":'
+        f'{{"accessToken":"{token}"}}'
+        "}}}}}</script>"
+    )
+    response.raise_for_status.return_value = None
+    return response
+
+
+def spotify_json_response(
+    items: list[dict[str, object]], *, next_url: str | None = None, status_code: int = 200
+) -> Mock:
+    response = Mock()
+    response.status_code = status_code
+    response.json.return_value = {"items": items, "next": next_url}
+    response.raise_for_status.return_value = None
+    return response
+
+
 @pytest.mark.asyncio
 async def test_youtube_playlist_entry_conversion() -> None:
     provider = YouTubeProvider()
@@ -376,8 +522,8 @@ def test_public_scraper_track_conversion_filters_non_tracks() -> None:
 
 
 def test_public_scraper_reads_spotify_embed_collection_metadata() -> None:
-    assert collection_metadata_from_page_title("feels - playlist by Romy Brunner | Spotify") == (
-        "Romy Brunner",
+    assert collection_metadata_from_page_title("feels - playlist by Romy B | Spotify") == (
+        "Romy B",
         "feels",
     )
     assert collection_metadata(
@@ -430,3 +576,16 @@ async def test_collection_resolver_enforces_scope_empty_and_limit() -> None:
     )
     with pytest.raises(CollectionResolveError, match="MAX_COLLECTION_TRACKS=1"):
         await resolver.expand(link)
+
+    settings = Settings(
+        telegram_bot_token="token",
+        allowed_telegram_user_ids={1},
+        music_dir=Path("/music"),
+        download_tmp_dir=Path("/tmp"),
+        max_collection_tracks=1000,
+    )
+    resolver = CollectionResolver(settings)
+    resolver.providers = [provider]
+    many_tracks = ExpandedCollection(spotify_tracks(1, 534))
+    provider.expand_collection.return_value = many_tracks
+    assert await resolver.expand(link) == many_tracks

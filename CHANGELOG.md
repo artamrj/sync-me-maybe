@@ -7,6 +7,17 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+## 0.10.4 - 2026-06-22
+
+### Fixed
+
+- Added best-effort Spotify playlist pagination so large public playlists are no longer limited
+  to the first 100 embed tracks when Spotify exposes an anonymous public token.
+
+### Changed
+
+- Bumped `pyproject.toml`, `uv.lock`, and package `__version__` from `0.10.3` to `0.10.4`.
+
 ## 0.10.3 - 2026-06-22
 
 ### Fixed
