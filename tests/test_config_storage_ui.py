@@ -208,7 +208,8 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
     assert "Playlist: femme" not in active_playlist
     assert "By:" not in active_playlist
     assert "██░░░░░░░░ 25%  • 1/4" in active_playlist
-    assert "⏳ ~3m 0s remaining" in active_playlist
+    assert "⠀⏳ ~3m 0s remaining" in active_playlist
+    assert "25%  • 1/4\n⠀⏳" in active_playlist
     assert "📥 1 saved • ⏭️ 0 skipped • ❌ 0 failed" in active_playlist
     assert "Queue: active" not in active_playlist
     assert "Track: Mumford & Sons - White Blank Page" in active_playlist

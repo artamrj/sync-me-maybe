@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
+from telegram import Message
 from telegram.ext import Application
 
 from sync_me_maybe.queueing.queue import QueuedJob
 from sync_me_maybe.telegram_bot.runtime import BotRuntime, RequestState
-from sync_me_maybe.telegram_bot.safe_api import safe_edit_message
+from sync_me_maybe.telegram_bot.safe_api import (
+    safe_delete_message,
+    safe_edit_message,
+    safe_send_message,
+)
 from sync_me_maybe.ui.messages import RequestView, StatusStage, render_request, status_keyboard
 
 
@@ -85,6 +91,8 @@ async def update_request(
     runtime: BotRuntime, application: Application, request: RequestState
 ) -> None:
     """Edit the Telegram status message for a RequestState."""
+    if request.status_message_id <= 0:
+        return
     if request.cancelled:
         request.stage = StatusStage.CANCELLED
     await safe_edit_message(
@@ -94,6 +102,50 @@ async def update_request(
         await render_request_text(runtime, request),
         reply_markup=request_keyboard(runtime, request),
     )
+
+
+async def send_request_status(
+    runtime: BotRuntime,
+    application: Application,
+    request: RequestState,
+    reply_to_message_id: int,
+) -> Message | None:
+    """Send the first visible status message for a request."""
+    status_message = await safe_send_message(
+        application.bot,
+        request.chat_id,
+        await render_request_text(runtime, request),
+        reply_to_message_id=reply_to_message_id,
+        allow_sending_without_reply=True,
+        reply_markup=request_keyboard(runtime, request),
+    )
+    message_id = getattr(status_message, "message_id", 0)
+    if isinstance(message_id, int):
+        request.status_message_id = message_id
+    return status_message
+
+
+async def schedule_initial_request_status(
+    runtime: BotRuntime,
+    application: Application,
+    request: RequestState,
+    reply_to_message_id: int,
+    sticker_message: object | None,
+    delay_seconds: float = 5.0,
+) -> Message | None:
+    """Send the first status immediately or after a temporary sticker delay."""
+    if sticker_message is None:
+        return await send_request_status(runtime, application, request, reply_to_message_id)
+
+    async def delayed_status() -> None:
+        await asyncio.sleep(delay_seconds)
+        await send_request_status(runtime, application, request, reply_to_message_id)
+        message_id = getattr(sticker_message, "message_id", 0)
+        if isinstance(message_id, int):
+            await safe_delete_message(application.bot, request.chat_id, message_id)
+
+    asyncio.create_task(delayed_status())
+    return None
 
 
 def job_request(runtime: BotRuntime, job: QueuedJob) -> RequestState | None:

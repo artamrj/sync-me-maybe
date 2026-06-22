@@ -105,7 +105,7 @@ Environment variables:
 - `MUSIC_DIR`: default `./music`.
 - `DOWNLOAD_TMP_DIR`: default `./tmp/sync-me-maybe`.
 - `YTDLP_COOKIES_FILE`: optional.
-- `RECEIVED_STICKER_ID`: optional Telegram sticker file ID for instant acknowledgements.
+- `RECEIVED_STICKER_ID`: optional Telegram sticker file ID for 5-second temporary acknowledgements.
 - `MAX_DOWNLOAD_SECONDS`: default `900`.
 - `MAX_COLLECTION_TRACKS`: default `1000`.
 - `UPLOAD_BATCH_WINDOW_SECONDS`: default `2`.
@@ -833,7 +833,7 @@ Main names:
 - `FAILED`
 - `CANCELLED`
 
-The UI layer is intentionally simple: it returns plain Telegram text and `InlineKeyboardMarkup`. Aggregate request messages follow `Preparing -> Queued -> Downloading -> Completed`; `Queued` is rendered only when another job is ahead, and final statuses stay compact. When `RECEIVED_STICKER_ID` is configured, the bot sends that sticker immediately as a temporary acknowledgement and deletes it once the first status message exists.
+The UI layer is intentionally simple: it returns plain Telegram text and `InlineKeyboardMarkup`. Aggregate request messages follow `Preparing -> Queued -> Downloading -> Completed`; `Queued` is rendered only when another job is ahead, and final statuses stay compact. When `RECEIVED_STICKER_ID` is configured, the bot shows that sticker for 5 seconds without blocking queue work, sends the latest status, then deletes the temporary sticker.
 
 Inline buttons can include:
 

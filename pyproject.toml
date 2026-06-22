@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sync-me-maybe"
-version = "0.10.2"
+version = "0.10.3"
 description = "Telegram bot that syncs music links and uploads to a local music folder."
 readme = "README.md"
 requires-python = ">=3.11"

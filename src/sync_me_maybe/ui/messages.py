@@ -189,6 +189,8 @@ def _visible_stage(view: RequestView) -> StatusStage:
         return view.stage
     if view.queue_position is not None and view.queue_position > 1:
         return StatusStage.QUEUED
+    if view.stage == StatusStage.QUEUED and view.completed > 0 and _is_collection(view):
+        return StatusStage.DOWNLOADING
     if view.stage == StatusStage.QUEUED:
         return StatusStage.THINKING
     return StatusStage.RECEIVED
@@ -268,6 +270,11 @@ def _detected_line(view: RequestView) -> str | None:
     return f"📦 {view.total} {unit} detected"
 
 
+def _is_collection(view: RequestView) -> bool:
+    source = _source_name(view).casefold()
+    return "playlist" in source or "album" in source
+
+
 def _preparing_detail(view: RequestView) -> str:
     if view.detail:
         return view.detail
@@ -286,7 +293,7 @@ def _eta_line(view: RequestView, done: int) -> str | None:
     seconds = round((view.elapsed_seconds / done) * remaining)
     if seconds <= 0:
         return None
-    return f"⏳ ~{_format_duration(seconds)} remaining"
+    return f"⠀⏳ ~{_format_duration(seconds)} remaining"
 
 
 def _format_duration(seconds: int) -> str:

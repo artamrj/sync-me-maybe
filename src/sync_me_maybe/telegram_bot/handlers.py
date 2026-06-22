@@ -27,9 +27,8 @@ from sync_me_maybe.queueing.retry import (
 from sync_me_maybe.telegram_bot.requests import (
     job_request,
     mark_request_cancelled,
-    render_request_text,
     request_cancelled,
-    request_keyboard,
+    schedule_initial_request_status,
     update_request,
 )
 from sync_me_maybe.telegram_bot.runtime import (
@@ -43,7 +42,6 @@ from sync_me_maybe.telegram_bot.runtime import (
 )
 from sync_me_maybe.telegram_bot.safe_api import (
     safe_chat_action,
-    safe_delete_message,
     safe_edit_message,
     safe_edit_status,
     safe_send_message,
@@ -51,11 +49,9 @@ from sync_me_maybe.telegram_bot.safe_api import (
 )
 from sync_me_maybe.telegram_bot.uploads import audio_document_filename, buffer_upload
 from sync_me_maybe.ui.messages import (
-    RequestView,
     StatusStage,
     render_collection_progress,
     render_error,
-    render_request,
     render_status,
     render_success,
     status_keyboard,
@@ -177,25 +173,10 @@ async def buffer_link_request(
         sticker_message = await send_received_sticker(
             runtime, application, message.chat_id, message.message_id
         )
-        status_message = await message.reply_text(
-            render_request(
-                RequestView(
-                    title=title,
-                    stage=StatusStage.THINKING,
-                    total=len(buffered_links) + len(unsupported),
-                    failed=len(unsupported),
-                    detail=detail,
-                    source_label=batch_source_label(buffered_links, unsupported),
-                )
-            ),
-            reply_to_message_id=message.message_id,
-            allow_sending_without_reply=True,
-        )
-        await delete_temporary_sticker(application, message.chat_id, sticker_message)
         request = RequestState(
             id=request_id,
             chat_id=message.chat_id,
-            status_message_id=status_message.message_id,
+            status_message_id=0,
             title=title,
             total=len(buffered_links) + len(unsupported),
             failed=len(unsupported),
@@ -208,6 +189,9 @@ async def buffer_link_request(
         runtime.requests[request_id] = request
         batch = LinkBatch(key=key, request=request, links=buffered_links, unsupported=unsupported)
         runtime.link_batches[key] = batch
+        await schedule_initial_request_status(
+            runtime, application, request, message.message_id, sticker_message
+        )
     else:
         batch.links.extend(buffered_links)
         batch.unsupported.extend(unsupported)
@@ -342,16 +326,6 @@ async def send_received_sticker(
     )
 
 
-async def delete_temporary_sticker(
-    application: Application, chat_id: int, sticker_message: object | None
-) -> None:
-    """Remove the temporary acknowledgement sticker after the status message exists."""
-    message_id = getattr(sticker_message, "message_id", 0)
-    if not isinstance(message_id, int):
-        return
-    await safe_delete_message(application.bot, chat_id, message_id)
-
-
 def add_unsupported_details(request: RequestState, unsupported: list[str]) -> None:
     """Record unsupported links as failed issue details once per reason."""
     known = {
@@ -412,25 +386,12 @@ async def enqueue_link(
     sticker_message = await send_received_sticker(
         runtime, application, message.chat_id, message.message_id
     )
-    status_message = await message.reply_text(
-        render_request(
-            RequestView(
-                title=title,
-                stage=StatusStage.THINKING,
-                current=detail,
-                source_label=source_display(classified),
-            )
-        ),
-        reply_to_message_id=message.message_id,
-        allow_sending_without_reply=True,
-    )
-    await delete_temporary_sticker(application, message.chat_id, sticker_message)
     # A RequestState owns the user-facing Telegram status message; the QueuedJob
     # below owns the actual work item processed by the background queue.
     request = RequestState(
         id=request_id,
         chat_id=message.chat_id,
-        status_message_id=status_message.message_id,
+        status_message_id=0,
         title=title,
         total=1,
         current=detail,
@@ -448,12 +409,12 @@ async def enqueue_link(
         kind=JobKind.LINK,
         chat_id=message.chat_id,
         original_message_id=message.message_id,
-        status_message_id=status_message.message_id,
+        status_message_id=request.status_message_id,
         user_id=message.from_user.id if message.from_user else 0,
         source_label=source_label,
         classified_link=classified,
         request_id=request_id,
-        request_status_message_id=status_message.message_id,
+        request_status_message_id=request.status_message_id,
         request_total=1,
         request_index=1,
         display_title=source_label,
@@ -461,10 +422,8 @@ async def enqueue_link(
     await runtime.queue.enqueue(job)
     request.job_ids.append(job.id)
     request.stage = StatusStage.QUEUED
-    await safe_edit_status(
-        status_message,
-        await render_request_text(runtime, request),
-        reply_markup=request_keyboard(runtime, request),
+    await schedule_initial_request_status(
+        runtime, application, request, message.message_id, sticker_message
     )
 
 
@@ -485,23 +444,10 @@ async def enqueue_collection(
     sticker_message = await send_received_sticker(
         runtime, application, message.chat_id, message.message_id
     )
-    status_message = await message.reply_text(
-        render_request(
-            RequestView(
-                title=source,
-                stage=StatusStage.THINKING,
-                current=detail,
-                source_label=source_display(classified),
-            )
-        ),
-        reply_to_message_id=message.message_id,
-        allow_sending_without_reply=True,
-    )
-    await delete_temporary_sticker(application, message.chat_id, sticker_message)
     request = RequestState(
         id=request_id,
         chat_id=message.chat_id,
-        status_message_id=status_message.message_id,
+        status_message_id=0,
         title=source,
         total=1,
         current=detail,
@@ -515,12 +461,12 @@ async def enqueue_collection(
         kind=JobKind.COLLECTION,
         chat_id=message.chat_id,
         original_message_id=message.message_id,
-        status_message_id=status_message.message_id,
+        status_message_id=request.status_message_id,
         user_id=message.from_user.id if message.from_user else 0,
         source_label=source_label,
         classified_link=classified,
         request_id=request_id,
-        request_status_message_id=status_message.message_id,
+        request_status_message_id=request.status_message_id,
         request_total=1,
         request_index=1,
         display_title=source_label,
@@ -528,10 +474,8 @@ async def enqueue_collection(
     await runtime.queue.enqueue(job)
     request.job_ids.append(job.id)
     request.stage = StatusStage.QUEUED
-    await safe_edit_status(
-        status_message,
-        await render_request_text(runtime, request),
-        reply_markup=request_keyboard(runtime, request),
+    await schedule_initial_request_status(
+        runtime, application, request, message.message_id, sticker_message
     )
 
 
@@ -552,29 +496,10 @@ async def enqueue_link_batch(
     sticker_message = await send_received_sticker(
         runtime, application, message.chat_id, message.message_id
     )
-    status_message = await message.reply_text(
-        render_request(
-            RequestView(
-                title=title,
-                stage=StatusStage.THINKING,
-                total=link_total,
-                failed=len(unsupported),
-                detail=detail,
-                source_label=(
-                    source_display(classified_links[0][1])
-                    if len(classified_links) == 1 and not unsupported
-                    else None
-                ),
-            )
-        ),
-        reply_to_message_id=message.message_id,
-        allow_sending_without_reply=True,
-    )
-    await delete_temporary_sticker(application, message.chat_id, sticker_message)
     request = RequestState(
         id=request_id,
         chat_id=message.chat_id,
-        status_message_id=status_message.message_id,
+        status_message_id=0,
         title=title,
         total=link_total,
         failed=len(unsupported),
@@ -603,12 +528,12 @@ async def enqueue_link_batch(
             kind=JobKind.LINK if classified.scope == LinkScope.TRACK else JobKind.COLLECTION,
             chat_id=message.chat_id,
             original_message_id=message.message_id,
-            status_message_id=status_message.message_id,
+            status_message_id=request.status_message_id,
             user_id=message.from_user.id if message.from_user else 0,
             source_label=source_label,
             classified_link=classified,
             request_id=request_id,
-            request_status_message_id=status_message.message_id,
+            request_status_message_id=request.status_message_id,
             request_total=len(classified_links),
             request_index=request_index,
             display_title=source_label,
@@ -617,10 +542,8 @@ async def enqueue_link_batch(
         request.job_ids.append(job.id)
 
     request.stage = StatusStage.QUEUED
-    await safe_edit_status(
-        status_message,
-        await render_request_text(runtime, request),
-        reply_markup=request_keyboard(runtime, request),
+    await schedule_initial_request_status(
+        runtime, application, request, message.message_id, sticker_message
     )
 
 
@@ -638,13 +561,15 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
     if request_cancelled(request):
         return
     resolved: ResolvedTrack | None = None
+    collection_child = job.resolved_track is not None
     try:
         await safe_chat_action(bot, job.chat_id, ChatAction.TYPING)
         if request:
-            request.stage = StatusStage.THINKING
-            request.current = job_track_label(job)
-            request.detail = "Preparing search."
-            await update_request(runtime, application, request)
+            if not collection_child:
+                request.stage = StatusStage.THINKING
+                request.current = job_track_label(job)
+                request.detail = "Preparing search."
+                await update_request(runtime, application, request)
         else:
             await safe_edit_message(
                 bot,
@@ -769,7 +694,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
             request.completed += 1
         request.paths.append(result.relative_path)
         done = request.completed + request.skipped + request.failed
-        request.stage = StatusStage.DONE if done >= request.total else StatusStage.QUEUED
+        request.stage = StatusStage.DONE if done >= request.total else StatusStage.DOWNLOADING
         if done >= request.total:
             request.download_started_at = None
         request.current = (

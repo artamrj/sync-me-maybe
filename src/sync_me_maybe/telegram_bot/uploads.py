@@ -25,9 +25,8 @@ from sync_me_maybe.queueing.retry import (
 from sync_me_maybe.telegram_bot.requests import (
     job_request,
     mark_request_cancelled,
-    render_request_text,
     request_cancelled,
-    request_keyboard,
+    schedule_initial_request_status,
     update_request,
 )
 from sync_me_maybe.telegram_bot.runtime import (
@@ -40,16 +39,12 @@ from sync_me_maybe.telegram_bot.runtime import (
 )
 from sync_me_maybe.telegram_bot.safe_api import (
     safe_chat_action,
-    safe_delete_message,
     safe_edit_message,
-    safe_edit_status,
     safe_send_sticker,
 )
 from sync_me_maybe.ui.messages import (
-    RequestView,
     StatusStage,
     render_error,
-    render_request,
     render_status,
     render_success,
     status_keyboard,
@@ -118,18 +113,10 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
         sticker_message = await send_received_sticker(
             runtime, application, message.chat_id, message.message_id
         )
-        status_message = await message.reply_text(
-            render_request(
-                RequestView(title="Telegram upload", stage=StatusStage.THINKING, current=filename)
-            ),
-            reply_to_message_id=message.message_id,
-            allow_sending_without_reply=True,
-        )
-        await delete_temporary_sticker(application, message.chat_id, sticker_message)
         request = RequestState(
             id=request_id,
             chat_id=message.chat_id,
-            status_message_id=status_message.message_id,
+            status_message_id=0,
             title="Telegram upload",
             total=1,
             current=filename,
@@ -142,6 +129,9 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
             uploads=[BufferedUpload(message.chat_id, message.message_id, user_id, payload)],
         )
         runtime.upload_batches[key] = batch
+        await schedule_initial_request_status(
+            runtime, application, request, message.message_id, sticker_message
+        )
     else:
         # A new file arrived before the window closed, so extend the batch and
         # restart the timer.
@@ -211,24 +201,10 @@ async def enqueue_upload_request(
         reply_to_message_id=original_message_id,
         allow_sending_without_reply=True,
     )
-    status_message = await application.bot.send_message(
-        chat_id=chat_id,
-        text=render_request(
-            RequestView(
-                title="Telegram upload" if len(uploads) == 1 else "Telegram uploads",
-                stage=StatusStage.THINKING,
-                current=first.payload.filename,
-                total=len(uploads),
-            )
-        ),
-        reply_to_message_id=original_message_id,
-        allow_sending_without_reply=True,
-    )
-    await delete_temporary_sticker(application, chat_id, sticker_message)
     request = RequestState(
         id=request_id,
         chat_id=chat_id,
-        status_message_id=status_message.message_id,
+        status_message_id=0,
         title="Telegram upload" if len(uploads) == 1 else "Telegram uploads",
         total=len(uploads),
         current=first.payload.filename,
@@ -240,10 +216,8 @@ async def enqueue_upload_request(
         await runtime.queue.enqueue(job)
         request.job_ids.append(job.id)
     request.stage = StatusStage.QUEUED
-    await safe_edit_status(
-        status_message,
-        await render_request_text(runtime, request),
-        reply_markup=request_keyboard(runtime, request),
+    await schedule_initial_request_status(
+        runtime, application, request, original_message_id, sticker_message
     )
 
 
@@ -278,16 +252,6 @@ async def send_received_sticker(
         reply_to_message_id=reply_to_message_id,
         allow_sending_without_reply=True,
     )
-
-
-async def delete_temporary_sticker(
-    application: Application, chat_id: int, sticker_message: object | None
-) -> None:
-    """Remove the temporary acknowledgement sticker after the status message exists."""
-    message_id = getattr(sticker_message, "message_id", 0)
-    if not isinstance(message_id, int):
-        return
-    await safe_delete_message(application.bot, chat_id, message_id)
 
 
 async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: Application) -> None:

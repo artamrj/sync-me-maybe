@@ -7,6 +7,20 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+## 0.10.3 - 2026-06-22
+
+### Fixed
+
+- Made the received sticker delay non-blocking so queue work starts immediately while the first
+  status message waits 5 seconds.
+- Kept collection downloads visually in `Downloading` between child tracks instead of returning
+  to `Preparing`.
+- Added a small leading spacer before the remaining-time line to improve Telegram readability.
+
+### Changed
+
+- Bumped `pyproject.toml`, `uv.lock`, and package `__version__` from `0.10.2` to `0.10.3`.
+
 ## 0.10.2 - 2026-06-22
 
 ### Fixed

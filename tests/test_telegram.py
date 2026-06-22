@@ -152,6 +152,10 @@ async def test_request_helpers_position_keyboard_update_and_cancel(
     await update_request(runtime, fake_application, request)
     fake_application.bot.edit_message_text.assert_awaited()
 
+    delayed_request = RequestState("delayed", 1, 0, "Delayed", 1)
+    await update_request(runtime, fake_application, delayed_request)
+    assert delayed_request.status_message_id == 0
+
     await mark_request_cancelled(runtime, fake_application, request)
     assert request.cancelled
     assert request.cancel_event.is_set()
@@ -266,18 +270,23 @@ async def test_handle_message_routes_auth_upload_empty_single_and_batch(
 
     fake_update.effective_user.id = 42
     fake_message.reply_text.reset_mock()
+    fake_context.application.bot.send_message.reset_mock()
     await handle_message(fake_update, fake_context)
     fake_message.reply_text.assert_awaited_with(
         "Send an audio file, music link, playlist link, or album link."
     )
 
     fake_message.text = "https://youtu.be/abc"
+    fake_context.application.bot.send_message.return_value = SimpleNamespace(message_id=31)
     await handle_message(fake_update, fake_context)
     snapshot = await runtime.queue.snapshot()
     assert len(snapshot.pending) == 1
     assert snapshot.pending[0].kind == JobKind.LINK
-    assert "📥 Received" not in fake_message.reply_text.await_args_list[-1].args[0]
-    assert "🟣 Status     Preparing" in fake_message.reply_text.await_args_list[-1].args[0]
+    assert "📥 Received" not in fake_context.application.bot.send_message.await_args.kwargs["text"]
+    assert (
+        "🟣 Status     Preparing"
+        in fake_context.application.bot.send_message.await_args.kwargs["text"]
+    )
     fake_context.application.bot.send_sticker.assert_not_awaited()
 
     fake_message.text = (
@@ -323,14 +332,25 @@ async def test_received_sticker_is_sent_only_when_configured(
     fake_application.bot_data["runtime"] = runtime
     fake_context.application = fake_application
     fake_application.bot.send_sticker.return_value = SimpleNamespace(message_id=44)
+    fake_application.bot.send_message.return_value = SimpleNamespace(message_id=45)
     fake_message.text = "https://youtu.be/abc"
 
-    await handle_message(fake_update, fake_context)
+    original_sleep = asyncio.sleep
+    with patch("sync_me_maybe.telegram_bot.requests.asyncio.sleep", new=AsyncMock()) as sleep:
+        await handle_message(fake_update, fake_context)
+        snapshot = await runtime.queue.snapshot()
+        assert len(snapshot.pending) == 1
+        fake_application.bot.send_message.assert_not_awaited()
+        await original_sleep(0)
 
     fake_application.bot.send_sticker.assert_awaited_once()
     assert fake_application.bot.send_sticker.await_args.kwargs["sticker"] == "sticker-id"
+    sleep.assert_awaited_once_with(5.0)
+    fake_application.bot.send_message.assert_awaited_once()
     fake_application.bot.delete_message.assert_awaited_once_with(chat_id=1, message_id=44)
-    assert "📥 Received" not in fake_message.reply_text.await_args.args[0]
+    request = next(iter(runtime.requests.values()))
+    assert request.status_message_id == 45
+    assert "📥 Received" not in fake_application.bot.send_message.await_args.kwargs["text"]
 
 
 @pytest.mark.asyncio
@@ -356,7 +376,7 @@ async def test_fast_link_messages_share_one_status_message_and_request(
     await handle_message(fake_update, fake_context)
     await asyncio.sleep(0)
 
-    assert fake_message.reply_text.await_count == 1
+    assert fake_application.bot.send_message.await_count == 1
     assert first_flush_task.cancelled()
     assert len(runtime.link_batches) == 1
     assert batch.request.total == 2
@@ -411,6 +431,7 @@ async def test_process_link_job_success_failure_and_retry(
     rendered_updates = [
         call.kwargs["text"] for call in fake_application.bot.edit_message_text.await_args_list
     ]
+    assert any("🟣 Status     Preparing" in text for text in rendered_updates)
     assert any("Track: Artist - Song" in text for text in rendered_updates)
 
     skip_request = RequestState("r-skip", 1, 11, "youtube", 1)
@@ -465,6 +486,49 @@ async def test_process_link_job_success_failure_and_retry(
     assert failed_request.issue_details[0].reason == "permanent"
     assert len(failed_request.failed_jobs) == 1
     assert failed_request.failed_jobs[0].classified_link == classified
+
+    collection_request = RequestState(
+        "r-collection-child",
+        1,
+        15,
+        "spotify playlist",
+        2,
+        completed=1,
+        collection_title="Playlist",
+        source_label="Spotify playlist",
+        stage=StatusStage.DOWNLOADING,
+    )
+    runtime.requests[collection_request.id] = collection_request
+    child_temp = runtime.settings.download_tmp_dir / "child.mp3"
+    child_temp.write_text("audio", encoding="utf-8")
+    child_job = QueuedJob(
+        JobKind.LINK,
+        1,
+        2,
+        15,
+        42,
+        "spotify playlist track 2/2",
+        classified_link=classify_url("https://open.spotify.com/playlist/abc"),
+        request_id=collection_request.id,
+        resolved_track=ResolvedTrack(
+            "src",
+            "ytsearch1:Child Artist Child",
+            title="Child",
+            artist="Child Artist",
+        ),
+    )
+    runtime.downloader.download = AsyncMock(
+        return_value=DownloadedTrack(child_temp, TrackInfo("Child", "Child Artist"))
+    )
+    fake_application.bot.edit_message_text.reset_mock()
+    await process_link_job(child_job, runtime, fake_application)
+    collection_updates = [
+        call.kwargs["text"] for call in fake_application.bot.edit_message_text.await_args_list
+    ]
+    assert not any(
+        "🟣 Status     Preparing" in text for text in collection_updates
+    ), collection_updates
+    assert any("🔵 Status     Downloading" in text for text in collection_updates)
 
     retry_job = QueuedJob(JobKind.LINK, 1, 2, 10, 42, "youtube", classified_link=classified)
     with pytest.raises(Exception) as exc:
@@ -646,7 +710,7 @@ async def test_fast_uploads_share_one_status_message_and_request(
     await buffer_upload(fake_update, runtime, fake_application)
     await asyncio.sleep(0)
 
-    assert fake_message.reply_text.await_count == 1
+    assert fake_application.bot.send_message.await_count == 1
     assert first_flush_task.cancelled()
     assert len(runtime.upload_batches) == 1
     assert batch.request.total == 2
