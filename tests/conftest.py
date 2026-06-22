@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+
+# Opt into PTB's new `retry_after` timedelta behavior to avoid deprecation warnings
+os.environ.setdefault("PTB_TIMEDELTA", "1")
+
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
