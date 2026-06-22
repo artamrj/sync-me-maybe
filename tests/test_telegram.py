@@ -345,7 +345,7 @@ async def test_received_sticker_is_sent_only_when_configured(
 
     fake_application.bot.send_sticker.assert_awaited_once()
     assert fake_application.bot.send_sticker.await_args.kwargs["sticker"] == "sticker-id"
-    sleep.assert_awaited_once_with(5.0)
+    sleep.assert_awaited_once_with(3.0)
     fake_application.bot.send_message.assert_awaited_once()
     fake_application.bot.delete_message.assert_awaited_once_with(chat_id=1, message_id=44)
     request = next(iter(runtime.requests.values()))
