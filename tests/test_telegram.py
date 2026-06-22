@@ -525,9 +525,9 @@ async def test_process_link_job_success_failure_and_retry(
     collection_updates = [
         call.kwargs["text"] for call in fake_application.bot.edit_message_text.await_args_list
     ]
-    assert not any(
-        "🟣 Status     Preparing" in text for text in collection_updates
-    ), collection_updates
+    assert not any("🟣 Status     Preparing" in text for text in collection_updates), (
+        collection_updates
+    )
     assert any("🔵 Status     Downloading" in text for text in collection_updates)
 
     retry_job = QueuedJob(JobKind.LINK, 1, 2, 10, 42, "youtube", classified_link=classified)
