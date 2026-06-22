@@ -399,7 +399,7 @@ async def test_process_link_job_success_failure_and_retry(
     tmp_path: Path,
 ) -> None:
     classified = classify_url("https://youtu.be/abc")
-    request = RequestState("r1", 1, 10, "youtube", 1)
+    request = RequestState("r1", 1, 10, "youtube", 1, source_label="YouTube")
     runtime.requests[request.id] = request
     job = QueuedJob(
         JobKind.LINK,
@@ -426,6 +426,8 @@ async def test_process_link_job_success_failure_and_retry(
     assert request.stage == StatusStage.DONE
     assert request.completed == 1
     assert request.current is None
+    assert request.track_title == "Song"
+    assert request.track_artist == "Artist"
     assert request.paths == ["Artist - Song.mp3"]
     assert request.issue_details == []
     rendered_updates = [
@@ -433,6 +435,7 @@ async def test_process_link_job_success_failure_and_retry(
     ]
     assert any("🟣 Status     Preparing" in text for text in rendered_updates)
     assert any("Track: Artist - Song" in text for text in rendered_updates)
+    assert "📺 YouTube “Song” by Artist" in rendered_updates[-1]
 
     skip_request = RequestState("r-skip", 1, 11, "youtube", 1)
     runtime.requests[skip_request.id] = skip_request

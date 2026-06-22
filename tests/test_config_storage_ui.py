@@ -255,6 +255,21 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
     assert "Track:" not in missing_title_playlist
     assert "Queue:" not in missing_title_playlist
 
+    completed_track = render_request(
+        RequestView(
+            title="Shazam",
+            stage=StatusStage.DONE,
+            total=1,
+            completed=1,
+            track_title="Nothing Left to Lose",
+            track_artist="Kari Kimmel",
+            source_label="Shazam",
+        )
+    )
+    assert "🟢 Status     Completed" in completed_track
+    assert "🎶 Shazam “Nothing Left to Lose” by Kari Kimmel" in completed_track
+    assert "📥 1 saved • ⏭️ 0 skipped • ❌ 0 failed" in completed_track
+
     title_only_playlist = render_request(
         RequestView(
             title="Spotify playlist",

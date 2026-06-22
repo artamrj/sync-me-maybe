@@ -313,6 +313,18 @@ def job_track_label(job: QueuedJob, resolved: object | None = None) -> str:
     )
 
 
+def set_single_track_context(request: RequestState, track: object | None) -> None:
+    """Persist single-track metadata for final aggregate status messages."""
+    if request.total != 1 or track is None:
+        return
+    title = getattr(track, "title", None)
+    artist = getattr(track, "artist", None)
+    if title:
+        request.track_title = str(title)
+    if artist:
+        request.track_artist = str(artist)
+
+
 async def send_received_sticker(
     runtime: BotRuntime, application: Application, chat_id: int, reply_to_message_id: int
 ) -> object | None:
@@ -584,6 +596,8 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
             if isinstance(job.resolved_track, ResolvedTrack)
             else await runtime.resolver.resolve(classified)
         )
+        if request:
+            set_single_track_context(request, resolved)
         await safe_chat_action(bot, job.chat_id, ChatAction.UPLOAD_DOCUMENT)
         if request:
             request.stage = StatusStage.DOWNLOADING
@@ -605,6 +619,8 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         downloaded = await runtime.downloader.download(
             resolved, cancel_check=request.cancel_event.is_set if request else None
         )
+        if request:
+            set_single_track_context(request, downloaded.info)
         if request_cancelled(request):
             # If cancellation happened just after the blocking download returned,
             # remove the temp file before surfacing the cancellation.

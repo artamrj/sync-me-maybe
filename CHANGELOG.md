@@ -7,6 +7,17 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+## 0.10.5 - 2026-06-22
+
+### Fixed
+
+- Kept single-track title and artist metadata in completed Telegram status messages, so Shazam
+  and other track links no longer finish with only the provider name.
+
+### Changed
+
+- Bumped `pyproject.toml`, `uv.lock`, and package `__version__` from `0.10.4` to `0.10.5`.
+
 ## 0.10.4 - 2026-06-22
 
 ### Fixed

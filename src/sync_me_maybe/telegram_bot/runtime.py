@@ -49,6 +49,8 @@ class RequestState:
     failed: int = 0
     current: str | None = None
     detail: str | None = None
+    track_title: str | None = None
+    track_artist: str | None = None
     collection_title: str | None = None
     collection_owner: str | None = None
     source_label: str | None = None

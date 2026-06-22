@@ -37,6 +37,8 @@ class RequestView:
     queue_position: int | None = None
     detail: str | None = None
     paths: list[str] = field(default_factory=list)
+    track_title: str | None = None
+    track_artist: str | None = None
     collection_title: str | None = None
     collection_owner: str | None = None
     source_label: str | None = None
@@ -212,7 +214,7 @@ def _context_line(view: RequestView) -> str:
     source = _source_name(view)
     icon = _source_icon(source)
     title = _display_subject(view)
-    owner = (view.collection_owner or "").strip()
+    owner = _display_owner(view)
     if title and owner:
         return f"{icon} {source} “{title}” by {owner}"
     if title:
@@ -247,9 +249,19 @@ def _source_icon(source: str) -> str:
 def _display_subject(view: RequestView) -> str | None:
     if view.collection_title:
         return view.collection_title
+    if view.total == 1 and view.track_title:
+        return view.track_title
     if "file" in _source_name(view).casefold() and view.current:
         return view.current
     return None
+
+
+def _display_owner(view: RequestView) -> str:
+    if view.collection_title:
+        return (view.collection_owner or "").strip()
+    if view.total == 1 and view.track_title:
+        return (view.track_artist or "").strip()
+    return ""
 
 
 def _queue_line(view: RequestView) -> str:

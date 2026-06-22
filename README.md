@@ -23,7 +23,7 @@ Spotify, Apple Music, and Shazam links are used as search inputs. The bot does n
 - Playlist and album links are expanded into individual track jobs, capped by `MAX_COLLECTION_TRACKS`.
 - Playlist and album downloads are stored under `Owner - Collection Name` folders when provider metadata exposes a real owner. If the owner is missing or looks like a URL, the folder falls back to `Collection Name(<collection URL>)`.
 - Finished Telegram requests with failed jobs show a `Rerun failed` button that queues only the failed items again.
-- Telegram status messages follow a clear `Preparing -> Queued -> Downloading -> Completed` lifecycle, use source-specific icons, show playlist/album title and owner when known, and keep final statuses compact. If `RECEIVED_STICKER_ID` is configured, the bot shows that sticker for 5 seconds while work continues, then replaces it with the latest status message.
+- Telegram status messages follow a clear `Preparing -> Queued -> Downloading -> Completed` lifecycle, use source-specific icons, show playlist/album or single-track title and artist when known, and keep final statuses compact. If `RECEIVED_STICKER_ID` is configured, the bot shows that sticker for 5 seconds while work continues, then replaces it with the latest status message.
 
 ## Setup
 

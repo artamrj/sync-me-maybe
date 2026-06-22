@@ -50,6 +50,8 @@ async def render_request_text(runtime: BotRuntime, request: RequestState) -> str
             queue_position=await request_position(runtime, request),
             detail=request.detail,
             paths=request.paths,
+            track_title=request.track_title,
+            track_artist=request.track_artist,
             collection_title=request.collection_title,
             collection_owner=request.collection_owner,
             source_label=request.source_label,
@@ -131,7 +133,7 @@ async def schedule_initial_request_status(
     request: RequestState,
     reply_to_message_id: int,
     sticker_message: object | None,
-    delay_seconds: float = 5.0,
+    delay_seconds: float = 3.0,
 ) -> Message | None:
     """Send the first status immediately or after a temporary sticker delay."""
     if sticker_message is None:
