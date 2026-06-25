@@ -8,3 +8,4 @@ __pycache__/
 /music/
 /tmp/
 /sync-me-maybe/*
+.DS_Store
