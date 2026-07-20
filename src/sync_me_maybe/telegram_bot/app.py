@@ -7,7 +7,14 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Mess
 
 from sync_me_maybe.config import Settings
 from sync_me_maybe.telegram_bot.callbacks import handle_callback
-from sync_me_maybe.telegram_bot.commands import health, help_command, queue_command, start, user_id
+from sync_me_maybe.telegram_bot.commands import (
+    guests_command,
+    health,
+    help_command,
+    queue_command,
+    start,
+    user_id,
+)
 from sync_me_maybe.telegram_bot.handlers import handle_message
 from sync_me_maybe.telegram_bot.runtime import BotRuntime
 
@@ -30,6 +37,7 @@ def build_application(settings: Settings) -> Application:
     application.add_handler(CommandHandler("id", user_id))
     application.add_handler(CommandHandler("health", health))
     application.add_handler(CommandHandler("queue", queue_command))
+    application.add_handler(CommandHandler("guests", guests_command))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
     return application
@@ -46,6 +54,7 @@ async def post_init(application: Application) -> None:
             BotCommand("id", "Show your Telegram user ID"),
             BotCommand("health", "Check music folder access"),
             BotCommand("queue", "Show active and pending downloads"),
+            BotCommand("guests", "Manage temporary guest access"),
         ]
     )
 

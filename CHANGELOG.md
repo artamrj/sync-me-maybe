@@ -7,6 +7,23 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+## 0.11.0 - 2026-07-20
+
+### Added
+
+- Added owner-managed, one-time Telegram invite links for revocable guest music submissions in
+  private bot chats.
+- Added `/guests` controls for creating and invalidating invites and listing or revoking active
+  guests.
+
+### Security
+
+- Bound status callbacks and stored detail/path tokens to the user who submitted each request.
+
+### Changed
+
+- Bumped `pyproject.toml`, `uv.lock`, and package `__version__` from `0.10.5` to `0.11.0`.
+
 ## 0.10.5 - 2026-06-22
 
 ### Fixed

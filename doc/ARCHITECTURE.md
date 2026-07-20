@@ -153,11 +153,19 @@ Responsibilities:
   - `/id`
   - `/health`
   - `/queue`
+  - `/guests`
 - Register callback query handler.
 - Register a catch-all non-command message handler.
 - Start the queue worker in `post_init`.
 - Register Telegram bot command descriptions.
 - Stop the queue worker in `post_shutdown`.
+
+Guest access is process-local. Permanently allowlisted users are owners and can create single-use
+deep-link tokens from `/guests`. Redeeming `/start invite_<token>` in a private chat consumes the
+token and adds the Telegram user ID to the runtime guest grants. Guests can submit music only in
+private chats; owner commands and guest management remain restricted to the configured allowlist.
+Requests and callback tokens retain their submitting user ID so one authorized user cannot operate
+another user's status controls. Restarting the process clears unused invites and active grants.
 
 The bot runs in polling mode rather than webhook mode.
 

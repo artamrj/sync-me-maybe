@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import secrets
 import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -12,7 +13,7 @@ from uuid import uuid4
 from telegram import Update
 from telegram.ext import Application
 
-from sync_me_maybe.auth import is_allowed
+from sync_me_maybe.auth import is_allowed, is_private_chat
 from sync_me_maybe.config import Settings
 from sync_me_maybe.music.collections import CollectionResolver
 from sync_me_maybe.music.downloader import YtDlpDownloader
@@ -43,6 +44,7 @@ class RequestState:
     status_message_id: int
     title: str
     total: int
+    owner_user_id: int | None = None
     source_urls: list[str] = field(default_factory=list)
     completed: int = 0
     skipped: int = 0
@@ -70,6 +72,31 @@ class FailedJobRerun:
 
     title: str
     jobs: list[QueuedJob]
+
+
+@dataclass(frozen=True)
+class GuestInvite:
+    """One unused, process-local guest invitation."""
+
+    token: str
+    created_by: int
+
+
+@dataclass(frozen=True)
+class GuestGrant:
+    """One active, process-local guest authorization."""
+
+    user_id: int
+    display_name: str
+    granted_by: int
+
+
+@dataclass(frozen=True)
+class OwnedText:
+    """Callback text restricted to the user who created the request."""
+
+    owner_user_id: int | None
+    text: str
 
 
 @dataclass
@@ -121,9 +148,13 @@ class BotRuntime:
         self.settings = settings
         # Callback data in Telegram buttons must be short, so paths are remembered
         # in memory and buttons carry only generated tokens.
-        self.path_callbacks: dict[str, str] = {}
-        self.issue_callbacks: dict[str, str] = {}
-        self.rerun_failed_callbacks: dict[str, FailedJobRerun] = {}
+        self.path_callbacks: dict[str, OwnedText | str] = {}
+        self.issue_callbacks: dict[str, OwnedText | str] = {}
+        self.rerun_failed_callbacks: dict[
+            str, tuple[int | None, FailedJobRerun] | FailedJobRerun
+        ] = {}
+        self.guest_invites: dict[str, GuestInvite] = {}
+        self.guest_grants: dict[int, GuestGrant] = {}
         self.queue = DownloadQueue()
         self.resolver = LinkResolver()
         self.collection_resolver = CollectionResolver(settings)
@@ -140,26 +171,59 @@ class BotRuntime:
     def allowed(self, update: Update) -> bool:
         """Check whether the effective Telegram user can use protected actions."""
         user_id = update.effective_user.id if update.effective_user else None
+        if is_allowed(user_id, self.settings.allowed_telegram_user_ids):
+            return True
+        chat = getattr(update, "effective_chat", None)
+        return bool(
+            user_id in self.guest_grants
+            and chat is not None
+            and is_private_chat(getattr(chat, "type", None))
+        )
+
+    def owner(self, update: Update) -> bool:
+        """Return whether the effective user is permanently allowlisted."""
+        user_id = update.effective_user.id if update.effective_user else None
         return is_allowed(user_id, self.settings.allowed_telegram_user_ids)
 
-    def remember_path(self, relative_path: str) -> str:
+    def create_guest_invite(self, owner_user_id: int) -> GuestInvite:
+        """Create and retain a cryptographically random, single-use invite."""
+        token = secrets.token_urlsafe(18)
+        invite = GuestInvite(token=token, created_by=owner_user_id)
+        self.guest_invites[token] = invite
+        return invite
+
+    def redeem_guest_invite(self, token: str, user_id: int, display_name: str) -> GuestGrant | None:
+        """Consume an invite and grant access, or return None if it is invalid."""
+        invite = self.guest_invites.pop(token, None)
+        if invite is None:
+            return None
+        grant = GuestGrant(user_id=user_id, display_name=display_name, granted_by=invite.created_by)
+        self.guest_grants[user_id] = grant
+        return grant
+
+    def remember_path(self, relative_path: str, owner_user_id: int | None = None) -> str:
         """Store one path for later display through an inline keyboard callback."""
         token = uuid4().hex[:16]
-        self.path_callbacks[token] = relative_path
+        self.path_callbacks[token] = OwnedText(owner_user_id, relative_path)
         return f"path:{token}"
 
     def remember_issue_details(self, request: RequestState) -> str:
         """Store formatted skipped/failed details for later callback delivery."""
         token = uuid4().hex[:16]
-        self.issue_callbacks[token] = render_issue_details(request.issue_details)
+        self.issue_callbacks[token] = OwnedText(
+            request.owner_user_id, render_issue_details(request.issue_details)
+        )
         return f"issues:{token}"
 
     def remember_failed_jobs(self, request: RequestState) -> str:
         """Store cloneable failed jobs for a rerun callback."""
         token = uuid4().hex[:16]
-        self.rerun_failed_callbacks[token] = FailedJobRerun(
-            title=request.title,
-            jobs=[clone_job(job) for job in request.failed_jobs],
+        self.rerun_failed_callbacks[token] = (
+            request.owner_user_id,
+            FailedJobRerun(
+                title=request.title,
+                jobs=[clone_job(job) for job in request.failed_jobs],
+            ),
         )
         return f"rerun_failed:{token}"
 

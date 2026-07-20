@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from telegram.error import BadRequest, RetryAfter, TelegramError, TimedOut
 
+from sync_me_maybe.config import Settings
 from sync_me_maybe.library.storage import TrackInfo
 from sync_me_maybe.music.collections import CollectionResolveError
 from sync_me_maybe.music.downloader import DownloadedTrack, DownloadError
@@ -17,6 +18,7 @@ from sync_me_maybe.music.resolver import ResolvedTrack
 from sync_me_maybe.music.urls import classify_url
 from sync_me_maybe.queueing.queue import JobKind, QueuedJob, UploadPayload
 from sync_me_maybe.telegram_bot.callbacks import handle_callback
+from sync_me_maybe.telegram_bot.commands import guests_command, start
 from sync_me_maybe.telegram_bot.handlers import (
     enqueue_buffered_link_batch,
     enqueue_link_batch,
@@ -295,6 +297,169 @@ async def test_handle_message_routes_auth_upload_empty_single_and_batch(
     await handle_message(fake_update, fake_context)
     snapshot = await runtime.queue.snapshot()
     assert [job.kind for job in snapshot.pending][-2:] == [JobKind.LINK, JobKind.COLLECTION]
+
+
+@pytest.mark.asyncio
+async def test_guest_invite_redeems_once_in_private_chat_and_allows_music(
+    runtime: BotRuntime,
+    fake_application: SimpleNamespace,
+    fake_message: SimpleNamespace,
+) -> None:
+    invite = runtime.create_guest_invite(42)
+    guest = SimpleNamespace(id=77, full_name="Guest User")
+    update = SimpleNamespace(
+        effective_user=guest,
+        effective_chat=SimpleNamespace(id=77, type="private"),
+        effective_message=fake_message,
+        callback_query=None,
+    )
+    context = SimpleNamespace(application=fake_application, args=[f"invite_{invite.token}"])
+
+    await start(update, context)
+
+    assert runtime.guest_grants[77].display_name == "Guest User"
+    assert invite.token not in runtime.guest_invites
+    assert runtime.allowed(update)
+    fake_message.reply_text.assert_awaited_with(
+        "Guest access granted. Send a supported music link or audio file in this chat."
+    )
+
+    fake_message.reply_text.reset_mock()
+    await start(update, context)
+    fake_message.reply_text.assert_awaited_with(
+        "This guest invitation is invalid or no longer available."
+    )
+
+    fake_message.from_user = guest
+    fake_message.text = "https://youtu.be/guest"
+    fake_application.bot.send_message.return_value = SimpleNamespace(message_id=90)
+    message_context = SimpleNamespace(application=fake_application)
+    await handle_message(update, message_context)
+    snapshot = await runtime.queue.snapshot()
+    assert snapshot.pending[-1].user_id == 77
+    assert next(iter(runtime.requests.values())).owner_user_id == 77
+
+
+@pytest.mark.asyncio
+async def test_guest_invite_and_access_are_private_chat_only(
+    runtime: BotRuntime,
+    fake_application: SimpleNamespace,
+    fake_message: SimpleNamespace,
+) -> None:
+    invite = runtime.create_guest_invite(42)
+    guest = SimpleNamespace(id=77, full_name="Guest User")
+    update = SimpleNamespace(
+        effective_user=guest,
+        effective_chat=SimpleNamespace(id=-100, type="group"),
+        effective_message=fake_message,
+        callback_query=None,
+    )
+    context = SimpleNamespace(application=fake_application, args=[f"invite_{invite.token}"])
+
+    await start(update, context)
+    assert invite.token in runtime.guest_invites
+    fake_message.reply_text.assert_awaited_with(
+        "Guest invitations can only be accepted in a private chat."
+    )
+
+    runtime.redeem_guest_invite(invite.token, 77, "Guest User")
+    assert not runtime.allowed(update)
+    fake_message.reply_text.reset_mock()
+    fake_message.text = "https://youtu.be/no-group"
+    await handle_message(update, SimpleNamespace(application=fake_application))
+    fake_message.reply_text.assert_awaited_with("Not authorized.")
+
+
+@pytest.mark.asyncio
+async def test_owner_manages_invites_and_revokes_guest_without_cancelling_queue(
+    runtime: BotRuntime,
+    fake_application: SimpleNamespace,
+    fake_message: SimpleNamespace,
+) -> None:
+    fake_application.bot.username = "sync_me_maybe_bot"
+    owner_update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=42),
+        effective_chat=SimpleNamespace(id=1, type="private"),
+        effective_message=fake_message,
+        callback_query=None,
+    )
+    context = SimpleNamespace(application=fake_application)
+    await guests_command(owner_update, context)
+    assert "Active guests: none" in fake_message.reply_text.await_args.args[0]
+
+    query = SimpleNamespace(data="guests:create", answer=AsyncMock(), edit_message_text=AsyncMock())
+    owner_update.callback_query = query
+    await handle_callback(owner_update, context)
+    assert len(runtime.guest_invites) == 1
+    assert (
+        "https://t.me/sync_me_maybe_bot?start=invite_"
+        in (fake_application.bot.send_message.await_args.kwargs["text"])
+    )
+
+    token = next(iter(runtime.guest_invites))
+    runtime.redeem_guest_invite(token, 77, "Guest User")
+    queued = QueuedJob(JobKind.LINK, 77, 2, 3, 77, "guest work")
+    await runtime.queue.enqueue(queued)
+    query.data = "guests:revoke:77"
+    await handle_callback(owner_update, context)
+    assert 77 not in runtime.guest_grants
+    assert queued in (await runtime.queue.snapshot()).pending
+
+    query.data = "guests:create"
+    await handle_callback(owner_update, context)
+    pending_token = next(iter(runtime.guest_invites))
+    query.data = f"guests:invalidate:{pending_token}"
+    await handle_callback(owner_update, context)
+    assert pending_token not in runtime.guest_invites
+
+
+@pytest.mark.asyncio
+async def test_guest_cannot_use_owner_commands_or_another_users_callbacks(
+    runtime: BotRuntime,
+    fake_application: SimpleNamespace,
+    fake_message: SimpleNamespace,
+) -> None:
+    invite = runtime.create_guest_invite(42)
+    runtime.redeem_guest_invite(invite.token, 77, "Guest User")
+    guest = SimpleNamespace(id=77, full_name="Guest User")
+    query = SimpleNamespace(data="path:owned", answer=AsyncMock())
+    update = SimpleNamespace(
+        effective_user=guest,
+        effective_chat=SimpleNamespace(id=77, type="private"),
+        effective_message=fake_message,
+        callback_query=query,
+    )
+    context = SimpleNamespace(application=fake_application)
+
+    await guests_command(update, context)
+    fake_message.reply_text.assert_awaited_with("Not authorized.")
+
+    runtime.remember_path("Owner/Song.mp3", owner_user_id=42)
+    token = next(iter(runtime.path_callbacks))
+    query.data = f"path:{token}"
+    await handle_callback(update, context)
+    query.answer.assert_awaited_with("This action belongs to another user.", show_alert=True)
+
+    request = RequestState("owned-request", 77, 10, "Request", 1, owner_user_id=42)
+    runtime.requests[request.id] = request
+    query.data = f"cancel:{request.id}"
+    await handle_callback(update, context)
+    query.answer.assert_awaited_with("This action belongs to another user.", show_alert=True)
+
+    runtime.guest_grants.pop(77)
+    query.data = f"refresh:{request.id}"
+    await handle_callback(update, context)
+    query.answer.assert_awaited_with("Not authorized.", show_alert=True)
+
+
+def test_guest_access_is_process_local(settings: Settings) -> None:
+    first = BotRuntime(settings)
+    invite = first.create_guest_invite(42)
+    first.redeem_guest_invite(invite.token, 77, "Guest User")
+
+    restarted = BotRuntime(settings)
+    assert restarted.guest_invites == {}
+    assert restarted.guest_grants == {}
 
 
 @pytest.mark.asyncio

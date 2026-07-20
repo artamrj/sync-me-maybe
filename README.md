@@ -23,6 +23,7 @@ Spotify, Apple Music, and Shazam links are used as search inputs. The bot does n
 - Playlist and album links are expanded into individual track jobs, capped by `MAX_COLLECTION_TRACKS`.
 - Playlist and album downloads are stored under `Owner - Collection Name` folders when provider metadata exposes a real owner. If the owner is missing or looks like a URL, the folder falls back to `Collection Name(<collection URL>)`.
 - Finished Telegram requests with failed jobs show a `Rerun failed` button that queues only the failed items again.
+- Allowlisted owners can create one-time guest links that grant revocable, in-memory access to submit music in a private bot chat.
 - Telegram status messages follow a clear `Preparing -> Queued -> Downloading -> Completed` lifecycle, use source-specific icons, show playlist/album or single-track title and artist when known, and keep final statuses compact. If `RECEIVED_STICKER_ID` is configured, the bot shows that sticker for 5 seconds while work continues, then replaces it with the latest status message.
 
 ## Setup
@@ -111,6 +112,18 @@ See [CHANGELOG.md](CHANGELOG.md) for release history and versioning notes.
 - `/id`: show your Telegram user ID for allowlist setup.
 - `/health`: verify the bot can write to the music directory.
 - `/queue`: show the active download and pending queue.
+- `/guests`: create one-time guest invitations, list active guests, and revoke guest access (allowlisted owners only).
+
+## Temporary Guest Access
+
+Every user configured in `ALLOWED_TELEGRAM_USER_IDS` is an owner. Open `/guests` and select
+`Create invite` to receive a one-time Telegram link. The recipient must open that link in a
+private chat with the bot. Once accepted, the guest can submit the same supported links and audio
+uploads as an owner, but cannot inspect the global queue, run health checks, or manage guests.
+
+Guest access lasts until an owner revokes it from `/guests` or the bot restarts. Unused invitation
+links are also kept only in memory and become invalid after a restart. Revoking a guest blocks new
+requests immediately but does not cancel work that is already queued or downloading.
 
 Incoming links and uploads are added to a global in-memory queue immediately. The bot optionally shows the configured received sticker for 5 seconds without blocking the queue, removes that temporary sticker once the status exists, then edits the status reply as the item moves through preparing, queued, downloading, and completed states. The queued state is shown only when another job is ahead.
 

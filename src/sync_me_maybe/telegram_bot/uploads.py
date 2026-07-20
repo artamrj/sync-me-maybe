@@ -119,6 +119,7 @@ async def buffer_upload(update: Update, runtime: BotRuntime, application: Applic
             status_message_id=0,
             title="Telegram upload",
             total=1,
+            owner_user_id=user_id,
             current=filename,
             stage=StatusStage.THINKING,
         )
@@ -207,6 +208,7 @@ async def enqueue_upload_request(
         status_message_id=0,
         title="Telegram upload" if len(uploads) == 1 else "Telegram uploads",
         total=len(uploads),
+        owner_user_id=user_id,
         current=first.payload.filename,
         stage=StatusStage.THINKING,
     )
@@ -289,7 +291,7 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
                 render_success(relative_path, skipped=True),
                 reply_markup=status_keyboard(
                     relative_path=relative_path,
-                    path_callback_data=runtime.remember_path(relative_path),
+                    path_callback_data=runtime.remember_path(relative_path, job.user_id),
                 ),
             )
         return
@@ -373,7 +375,7 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
             render_success(result.relative_path, skipped=result.skipped),
             reply_markup=status_keyboard(
                 relative_path=result.relative_path,
-                path_callback_data=runtime.remember_path(result.relative_path),
+                path_callback_data=runtime.remember_path(result.relative_path, job.user_id),
             ),
         )
 

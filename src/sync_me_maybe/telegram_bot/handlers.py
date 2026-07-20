@@ -179,6 +179,7 @@ async def buffer_link_request(
             status_message_id=0,
             title=title,
             total=len(buffered_links) + len(unsupported),
+            owner_user_id=user_id,
             failed=len(unsupported),
             detail=detail,
             source_urls=[link.classified_link.url for link in buffered_links],
@@ -406,6 +407,7 @@ async def enqueue_link(
         status_message_id=0,
         title=title,
         total=1,
+        owner_user_id=message.from_user.id if message.from_user else None,
         current=detail,
         source_urls=[classified.url],
         source_label=source_display(classified),
@@ -462,6 +464,7 @@ async def enqueue_collection(
         status_message_id=0,
         title=source,
         total=1,
+        owner_user_id=message.from_user.id if message.from_user else None,
         current=detail,
         source_urls=[classified.url],
         source_label=source_display(classified),
@@ -514,6 +517,7 @@ async def enqueue_link_batch(
         status_message_id=0,
         title=title,
         total=link_total,
+        owner_user_id=message.from_user.id if message.from_user else None,
         failed=len(unsupported),
         detail=detail,
         source_urls=[classified.url for _, classified in classified_links],
@@ -727,7 +731,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
             reply_markup=status_keyboard(
                 source_url=classified.url,
                 relative_path=result.relative_path,
-                path_callback_data=runtime.remember_path(result.relative_path),
+                path_callback_data=runtime.remember_path(result.relative_path, job.user_id),
             ),
         )
     await update_parent_progress(

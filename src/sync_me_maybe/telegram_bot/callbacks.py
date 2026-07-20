@@ -7,6 +7,7 @@ from uuid import uuid4
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from sync_me_maybe.telegram_bot.commands import guest_invite_url, render_guest_management
 from sync_me_maybe.telegram_bot.requests import update_request
 from sync_me_maybe.telegram_bot.runtime import BotRuntime, FailedJobRerun, RequestState, clone_job
 from sync_me_maybe.telegram_bot.safe_api import safe_send_message
@@ -27,9 +28,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     data = query.data or ""
+    user_id = update.effective_user.id if update.effective_user else None
+    if data.startswith("guests:"):
+        if not runtime.owner(update) or user_id is None:
+            await query.answer("Owner access required.", show_alert=True)
+            return
+        await handle_guest_callback(runtime, context, update, data, user_id)
+        return
+
     if data == "health":
         # Health is exposed as both a command and a button so users can check
         # storage access from the welcome/status keyboard.
+        if not runtime.owner(update):
+            await query.answer("Owner access required.", show_alert=True)
+            return
         try:
             runtime.settings.music_dir.mkdir(parents=True, exist_ok=True)
             probe = runtime.settings.music_dir / ".sync-me-maybe-health"
@@ -45,18 +57,33 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         # Path callbacks intentionally read from memory. If the process restarted,
         # the file may still exist but the short callback token is gone.
         token = data.removeprefix("path:")
-        await query.answer(
-            runtime.path_callbacks.get(token, "Path is no longer available in memory."),
-            show_alert=True,
-        )
+        value = runtime.path_callbacks.get(token)
+        if value is None:
+            await query.answer("Path is no longer available in memory.", show_alert=True)
+            return
+        if isinstance(value, str):
+            text = value
+        else:
+            if value.owner_user_id is not None and value.owner_user_id != user_id:
+                await query.answer("This action belongs to another user.", show_alert=True)
+                return
+            text = value.text
+        await query.answer(text, show_alert=True)
         return
 
     if data.startswith("issues:"):
         token = data.removeprefix("issues:")
-        details = runtime.issue_callbacks.get(token)
-        if not details:
+        value = runtime.issue_callbacks.get(token)
+        if not value:
             await query.answer("Details are no longer available in memory.", show_alert=True)
             return
+        if isinstance(value, str):
+            details = value
+        else:
+            if value.owner_user_id is not None and value.owner_user_id != user_id:
+                await query.answer("This action belongs to another user.", show_alert=True)
+                return
+            details = value.text
         chat = getattr(update, "effective_chat", None)
         chat_id = chat.id if chat else None
         if chat_id is None and update.effective_message:
@@ -71,12 +98,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if data.startswith("rerun_failed:"):
         token = data.removeprefix("rerun_failed:")
-        rerun = runtime.rerun_failed_callbacks.get(token)
-        if not rerun:
+        stored_rerun = runtime.rerun_failed_callbacks.get(token)
+        if not stored_rerun:
             await query.answer(
                 "Failed retry data is no longer available in memory.", show_alert=True
             )
             return
+        if isinstance(stored_rerun, FailedJobRerun):
+            rerun = stored_rerun
+        else:
+            owner_user_id, rerun = stored_rerun
+            if owner_user_id is not None and owner_user_id != user_id:
+                await query.answer("This action belongs to another user.", show_alert=True)
+                return
         await rerun_failed_jobs(runtime, context, update, rerun)
         await query.answer("Queued failed item(s) again.")
         return
@@ -87,6 +121,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not request:
             await query.answer("This status is no longer available in memory.", show_alert=True)
             return
+        if request.owner_user_id is not None and request.owner_user_id != user_id:
+            await query.answer("This action belongs to another user.", show_alert=True)
+            return
         await update_request(runtime, context.application, request)
         await query.answer("Refreshed.")
         return
@@ -96,6 +133,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         request = runtime.requests.get(request_id)
         if not request:
             await query.answer("This request is no longer available in memory.", show_alert=True)
+            return
+        if request.owner_user_id is not None and request.owner_user_id != user_id:
+            await query.answer("This action belongs to another user.", show_alert=True)
             return
         if request.cancelled or request.stage in {
             StatusStage.DONE,
@@ -117,6 +157,58 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     await query.answer()
+
+
+async def handle_guest_callback(
+    runtime: BotRuntime,
+    context: ContextTypes.DEFAULT_TYPE,
+    update: Update,
+    data: str,
+    owner_user_id: int,
+) -> None:
+    """Create, revoke, or invalidate process-local guest access."""
+    query = update.callback_query
+    assert query is not None
+    if data == "guests:create":
+        invite = runtime.create_guest_invite(owner_user_id)
+        username = getattr(context.application.bot, "username", None)
+        if not username:
+            runtime.guest_invites.pop(invite.token, None)
+            await query.answer("Bot username is unavailable.", show_alert=True)
+            return
+        url = guest_invite_url(username, invite.token)
+        chat = update.effective_chat
+        if chat is None:
+            runtime.guest_invites.pop(invite.token, None)
+            await query.answer("Cannot find this chat.", show_alert=True)
+            return
+        await context.application.bot.send_message(
+            chat_id=chat.id,
+            text=(
+                f"One-time guest invitation:\n{url}\n\nIt remains valid until used or invalidated."
+            ),
+        )
+        await query.answer("Invite created.")
+    elif data.startswith("guests:revoke:"):
+        raw_user_id = data.removeprefix("guests:revoke:")
+        try:
+            guest_user_id = int(raw_user_id)
+        except ValueError:
+            await query.answer("Invalid guest.", show_alert=True)
+            return
+        removed_grant = runtime.guest_grants.pop(guest_user_id, None)
+        await query.answer("Guest revoked." if removed_grant else "Guest is no longer active.")
+    elif data.startswith("guests:invalidate:"):
+        token = data.removeprefix("guests:invalidate:")
+        removed_invite = runtime.guest_invites.pop(token, None)
+        await query.answer(
+            "Invite invalidated." if removed_invite else "Invite is no longer active."
+        )
+    else:
+        await query.answer()
+        return
+    text, keyboard = render_guest_management(runtime)
+    await query.edit_message_text(text=text, reply_markup=keyboard)
 
 
 async def rerun_failed_jobs(
@@ -142,6 +234,7 @@ async def rerun_failed_jobs(
         status_message_id=message.message_id,
         title=f"Rerun failed: {rerun.title}",
         total=len(failed_jobs),
+        owner_user_id=update.effective_user.id if update.effective_user else None,
         source_urls=[
             job.classified_link.url
             for job in failed_jobs
