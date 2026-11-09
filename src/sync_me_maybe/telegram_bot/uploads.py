@@ -12,6 +12,7 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import Application
 
+from sync_me_maybe.library.index import read_index_tags
 from sync_me_maybe.library.storage import store_completed_file, upload_destination
 from sync_me_maybe.music.downloader import DownloadError
 from sync_me_maybe.queueing.queue import JobKind, QueuedJob, RetryJob, UploadPayload
@@ -328,6 +329,9 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
                 render_status(StatusStage.SAVING, "Telegram upload", filename),
             )
         result = store_completed_file(temp_path, destination, runtime.settings.music_dir)
+        if not result.skipped:
+            index_uploaded_file(runtime, result.path, result.relative_path)
+            runtime.request_library_scan()
     except Exception as exc:  # noqa: BLE001 - Telegram file APIs raise several exception types.
         temp_path.unlink(missing_ok=True)
         if await retry_upload_job(job, runtime, application, request, filename, exc):
@@ -378,6 +382,15 @@ async def process_upload_job(job: QueuedJob, runtime: BotRuntime, application: A
                 path_callback_data=runtime.remember_path(result.relative_path, job.user_id),
             ),
         )
+
+
+def index_uploaded_file(runtime: BotRuntime, path: Path, relative_path: str) -> None:
+    """Add an uploaded file to the library index so later links can skip it."""
+    try:
+        tags = read_index_tags(path)
+        runtime.library.add(relative_path, isrc=tags.isrc, artist=tags.artist, title=tags.title)
+    except Exception:  # noqa: BLE001 - indexing is an optimization, never a failure.
+        LOGGER.warning("Could not index upload %s", relative_path, exc_info=True)
 
 
 def set_upload_request_stage(request: RequestState) -> None:

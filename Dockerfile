@@ -28,8 +28,8 @@ RUN uv sync --frozen --no-dev --no-cache
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN chmod 755 /usr/local/bin/docker-entrypoint.sh \
-    && mkdir -p /music /tmp/sync-me-maybe /config \
-    && chmod 775 /music /tmp/sync-me-maybe /config
+    && mkdir -p /music /tmp/sync-me-maybe /config /data \
+    && chmod 775 /music /tmp/sync-me-maybe /config /data
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["sync-me-maybe"]

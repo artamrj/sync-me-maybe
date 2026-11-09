@@ -26,12 +26,16 @@ def settings(tmp_path: Path) -> Settings:
         upload_batch_window_seconds=0,
         # Keep tests offline: no Deezer, YouTube Music, or cover-art requests.
         metadata_lookup=False,
+        download_pause_seconds=0,
     )
 
 
 @pytest.fixture
 def runtime(settings: Settings) -> BotRuntime:
-    return BotRuntime(settings)
+    runtime = BotRuntime(settings)
+    # Edit every status change immediately so tests can assert each stage.
+    runtime.status_edit_interval = 0
+    return runtime
 
 
 @pytest.fixture

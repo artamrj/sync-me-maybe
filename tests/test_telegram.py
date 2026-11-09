@@ -13,9 +13,10 @@ from sync_me_maybe.config import Settings
 from sync_me_maybe.library.storage import TrackInfo
 from sync_me_maybe.music.collections import CollectionResolveError
 from sync_me_maybe.music.downloader import DownloadedTrack, DownloadError
-from sync_me_maybe.music.enrichment import PreparedTrack
+from sync_me_maybe.music.enrichment import FinalizedTrack, PreparedTrack
 from sync_me_maybe.music.providers.base import ExpandedCollection, TrackSearchItem
 from sync_me_maybe.music.resolver import ResolvedTrack
+from sync_me_maybe.music.tagging import AudioTags
 from sync_me_maybe.music.urls import classify_url
 from sync_me_maybe.queueing.queue import JobKind, QueuedJob, UploadPayload
 from sync_me_maybe.telegram_bot.callbacks import handle_callback
@@ -594,7 +595,7 @@ async def test_process_link_job_success_failure_and_retry(
     assert request.current is None
     assert request.track_title == "Song"
     assert request.track_artist == "Artist"
-    assert request.paths == ["Artist - Song.mp3"]
+    assert request.paths == ["Artist/Song.mp3"]
     assert request.issue_details == []
     rendered_updates = [
         call.kwargs["text"] for call in fake_application.bot.edit_message_text.await_args_list
@@ -627,7 +628,9 @@ async def test_process_link_job_success_failure_and_retry(
     await process_link_job(skip_job, runtime, fake_application)
     assert skip_request.skipped == 1
     assert skip_request.issue_details[0].status == "skipped"
-    assert skip_request.issue_details[0].path == "Artist - Song.mp3"
+    assert skip_request.issue_details[0].path == "Artist/Song.mp3"
+    # The duplicate was found in the library index before downloading.
+    runtime.downloader.download.assert_not_awaited()
     assert skip_request.issue_details[0].metadata["Title"] == "Song"
     assert skip_request.failed_jobs == []
 
@@ -1068,7 +1071,9 @@ async def test_process_link_job_skips_known_track_before_download_and_uses_enric
     matched = replace(searched, download_url="https://www.youtube.com/watch?v=x")
     runtime.resolver.resolve = AsyncMock(return_value=searched)
     runtime.enricher.prepare = AsyncMock(return_value=PreparedTrack(matched))
-    runtime.enricher.finalize = AsyncMock(return_value=True)
+    runtime.enricher.finalize = AsyncMock(
+        return_value=FinalizedTrack(AudioTags(title="New", artists=("Artist",)), tagged=True)
+    )
     temp = runtime.settings.download_tmp_dir / "new.m4a"
     temp.parent.mkdir(parents=True, exist_ok=True)
     temp.write_text("audio", encoding="utf-8")
@@ -1081,5 +1086,79 @@ async def test_process_link_job_skips_known_track_before_download_and_uses_enric
     assert runtime.downloader.download.await_args.args[0] == matched
     runtime.enricher.finalize.assert_awaited_once()
     assert new_request.completed == 1
-    assert new_request.paths == ["Artist - New.m4a"]
-    assert (music / "Artist - New.m4a").exists()
+    assert new_request.paths == ["Artist/New.m4a"]
+    assert (music / "Artist" / "New.m4a").exists()
+    assert runtime.library.lookup(artist="Artist", title="New") == "Artist/New.m4a"
+
+
+@pytest.mark.asyncio
+async def test_playlist_tracks_are_stored_once_and_written_to_m3u8(
+    runtime: BotRuntime,
+    fake_application: SimpleNamespace,
+) -> None:
+    music = runtime.settings.music_dir
+    (music / "Artist").mkdir(parents=True)
+    (music / "Artist" / "Known.m4a").write_text("old", encoding="utf-8")
+    runtime.library.add("Artist/Known.m4a", artist="Artist", title="Known")
+    classified = classify_url("https://open.spotify.com/playlist/abc")
+    request = RequestState("r-pl", 1, 10, "spotify playlist", 1)
+    runtime.requests[request.id] = request
+    collection_job = QueuedJob(
+        JobKind.COLLECTION, 1, 2, 10, 42, "playlist", classified_link=classified, request_id="r-pl"
+    )
+    runtime.collection_resolver.expand = AsyncMock(
+        return_value=ExpandedCollection(
+            [TrackSearchItem("Known", "Artist"), TrackSearchItem("New", "Artist")],
+            owner="Arta",
+            title="Road Trip",
+        )
+    )
+    await process_collection_job(collection_job, runtime, fake_application)
+    assert request.expanded_collections == [classified.url]
+    children = list((await runtime.queue.snapshot()).pending)
+
+    temp = runtime.settings.download_tmp_dir / "new.m4a"
+    temp.parent.mkdir(parents=True, exist_ok=True)
+    temp.write_text("audio", encoding="utf-8")
+    runtime.downloader.download = AsyncMock(
+        return_value=DownloadedTrack(temp, TrackInfo("New", "Artist"))
+    )
+    runtime.enricher.finalize = AsyncMock(
+        return_value=FinalizedTrack(
+            AudioTags(title="New", artists=("Artist",), album="LP", track_number=2)
+        )
+    )
+    for child in children:
+        await process_link_job(child, runtime, fake_application)
+
+    runtime.downloader.download.assert_awaited_once()  # "Known" was skipped before download
+    assert request.skipped == 1 and request.completed == 1
+    assert request.stage == StatusStage.DONE
+    assert (music / "Artist" / "LP" / "02 - New.m4a").exists()
+    assert not (music / "Arta - Road Trip").exists()  # no per-playlist copies
+    playlist = (music / "Playlists" / "Arta - Road Trip.m3u8").read_text(encoding="utf-8")
+    assert playlist.splitlines()[3::2] == ["../Artist/Known.m4a", "../Artist/LP/02 - New.m4a"]
+
+
+@pytest.mark.asyncio
+async def test_status_edits_are_throttled_but_final_state_is_immediate(
+    runtime: BotRuntime,
+    fake_application: SimpleNamespace,
+) -> None:
+    runtime.status_edit_interval = 0.2
+    request = RequestState("r-throttle", 1, 10, "Batch", 5, stage=StatusStage.DOWNLOADING)
+    edit = fake_application.bot.edit_message_text
+
+    for done in range(1, 4):
+        request.completed = done
+        await update_request(runtime, fake_application, request)
+    assert edit.await_count == 1  # first edit immediate, the rest coalesced
+    await asyncio.sleep(0.3)
+    assert edit.await_count == 2  # one trailing edit with the latest counters
+    assert "3 saved" in edit.await_args.kwargs["text"]
+
+    request.completed = 5
+    request.stage = StatusStage.DONE
+    await update_request(runtime, fake_application, request)
+    assert edit.await_count == 3
+    assert runtime.store.load_requests()[0].completed == 5

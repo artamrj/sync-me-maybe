@@ -201,7 +201,9 @@ async def test_enricher_finalize_writes_canonical_tags_and_cover(tmp_path: Path)
     enricher = TrackEnricher(metadata=Mock(), matcher=Mock())
     enricher._cover = Mock(return_value=CoverArt(JPEG))  # type: ignore[method-assign]
 
-    assert await enricher.finalize(downloaded, PreparedTrack(resolved(), canonical))
+    finalized = await enricher.finalize(downloaded, PreparedTrack(resolved(), canonical))
+    assert finalized.tagged
+    assert finalized.canonical == canonical
 
     enricher._cover.assert_called_once_with("https://cdn/album.jpg")
     tags = mutagen.File(path).tags
@@ -219,14 +221,15 @@ async def test_enricher_finalize_offline_uses_known_info_and_never_raises(tmp_pa
     enricher = TrackEnricher(lookups_enabled=False, metadata=metadata, matcher=Mock())
     downloaded = DownloadedTrack(path, TrackInfo("Song", "Band - Topic", album="Album"))
 
-    assert await enricher.finalize(downloaded, PreparedTrack(resolved("https://youtu.be/x")))
+    finalized = await enricher.finalize(downloaded, PreparedTrack(resolved("https://youtu.be/x")))
+    assert finalized.tagged
     metadata.lookup.assert_not_called()
     easy = mutagen.File(path, easy=True)
     assert easy["artist"] == ["Band"]
     assert easy["album"] == ["Album"]
 
     broken = DownloadedTrack(tmp_path / "missing.m4a", TrackInfo("Song"))
-    assert await enricher.finalize(broken, PreparedTrack(resolved())) is False
+    assert (await enricher.finalize(broken, PreparedTrack(resolved()))).tagged is False
 
 
 def test_build_tags_uses_canonical_only_when_present() -> None:
@@ -258,3 +261,41 @@ async def test_enricher_skips_title_only_metadata_lookup() -> None:
     metadata.lookup.assert_not_called()
     matcher.find.assert_called_once()
     assert prepared.canonical is None
+
+
+@pytest.mark.asyncio
+async def test_enricher_prefetches_cover_and_lyrics_during_download(tmp_path: Path) -> None:
+    from sync_me_maybe.music.lyrics import Lyrics
+
+    metadata = Mock()
+    canonical = canonical_from_deezer(TRACK_JSON, ALBUM_JSON)
+    metadata.lookup.return_value = canonical
+    matcher = Mock()
+    matcher.find.return_value = youtube_match()
+    lyrics_client = Mock()
+    lyrics_client.fetch.return_value = Lyrics(synced="[00:01.00] One more time")
+    enricher = TrackEnricher(metadata=metadata, matcher=matcher, lyrics=lyrics_client)
+    enricher._cover = Mock(return_value=CoverArt(JPEG))  # type: ignore[method-assign]
+
+    # With a known duration, metadata lookup and matching run together.
+    prepared = await enricher.prepare(resolved())
+    task = enricher.prefetch(prepared)
+    assert task is not None
+    path = tmp_path / "temp.m4a"
+    shutil.copy(FIXTURES / "silence.m4a", path)
+    finalized = await enricher.finalize(
+        DownloadedTrack(path, TrackInfo("One More Time", "Daft Punk"), 320), prepared, task
+    )
+
+    enricher._cover.assert_called_once_with("https://cdn/album.jpg")
+    lyrics_client.fetch.assert_called_once_with("One More Time", "Daft Punk", "Discovery", 320)
+    assert finalized.lyrics == Lyrics(synced="[00:01.00] One more time")
+    assert finalized.tagged
+
+    no_lyrics = TrackEnricher(
+        metadata=metadata, matcher=matcher, lyrics=lyrics_client, lyrics_enabled=False
+    )
+    no_lyrics._cover = Mock(return_value=None)  # type: ignore[method-assign]
+    extras = await no_lyrics.prefetch(prepared)  # type: ignore[misc]
+    assert extras.lyrics is None and not extras.lyrics_tried
+    assert TrackEnricher(lookups_enabled=False).prefetch(prepared) is None

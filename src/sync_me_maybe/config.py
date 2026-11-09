@@ -67,7 +67,23 @@ class Settings:
     upload_batch_window_seconds: float = 2.0
     audio_format: str = "m4a"
     metadata_lookup: bool = True
+    # None keeps the database in memory (tests); from_env defaults to ./data.
+    data_dir: Path | None = None
+    max_parallel_downloads: int = 2
+    download_pause_seconds: float = 3.0
+    lyrics: bool = True
+    navidrome_url: str | None = None
+    navidrome_user: str | None = None
+    navidrome_password: str | None = None
     log_level: str = "INFO"
+
+    @property
+    def database_path(self) -> Path | None:
+        return self.data_dir / "sync-me-maybe.db" if self.data_dir else None
+
+    @property
+    def navidrome_enabled(self) -> bool:
+        return bool(self.navidrome_url and self.navidrome_user and self.navidrome_password)
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -115,6 +131,27 @@ class Settings:
             "METADATA_LOOKUP", os.environ.get("METADATA_LOOKUP"), default=True
         )
 
+        parallel_raw = os.environ.get("MAX_PARALLEL_DOWNLOADS", "2").strip()
+        try:
+            max_parallel_downloads = int(parallel_raw)
+        except ValueError as exc:
+            raise ConfigError("MAX_PARALLEL_DOWNLOADS must be an integer") from exc
+        if not 1 <= max_parallel_downloads <= 8:
+            raise ConfigError("MAX_PARALLEL_DOWNLOADS must be between 1 and 8")
+        pause_raw = os.environ.get("DOWNLOAD_PAUSE_SECONDS", "3").strip()
+        try:
+            download_pause_seconds = float(pause_raw)
+        except ValueError as exc:
+            raise ConfigError("DOWNLOAD_PAUSE_SECONDS must be a number") from exc
+        if download_pause_seconds < 0:
+            raise ConfigError("DOWNLOAD_PAUSE_SECONDS must be non-negative")
+        lyrics = parse_bool("LYRICS", os.environ.get("LYRICS"), default=True)
+        navidrome_url = os.environ.get("NAVIDROME_URL", "").strip().rstrip("/") or None
+        navidrome_user = os.environ.get("NAVIDROME_USER", "").strip() or None
+        navidrome_password = os.environ.get("NAVIDROME_PASSWORD", "") or None
+        if navidrome_url and not (navidrome_user and navidrome_password):
+            raise ConfigError("NAVIDROME_URL requires NAVIDROME_USER and NAVIDROME_PASSWORD")
+
         music_dir = Path(os.environ.get("MUSIC_DIR", "./music"))
 
         return cls(
@@ -129,5 +166,12 @@ class Settings:
             upload_batch_window_seconds=upload_batch_window_seconds,
             audio_format=audio_format,
             metadata_lookup=metadata_lookup,
+            data_dir=Path(os.environ.get("DATA_DIR", "./data").strip() or "./data"),
+            max_parallel_downloads=max_parallel_downloads,
+            download_pause_seconds=download_pause_seconds,
+            lyrics=lyrics,
+            navidrome_url=navidrome_url,
+            navidrome_user=navidrome_user,
+            navidrome_password=navidrome_password,
             log_level=os.environ.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         )

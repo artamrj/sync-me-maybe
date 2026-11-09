@@ -355,3 +355,42 @@ def test_store_completed_file_matches_existing_track_in_other_format(tmp_path: P
     upload.write_text("new", encoding="utf-8")
     stored = store_completed_file(upload, music / "Artist - Song.m4a", music)
     assert not stored.skipped
+
+
+def test_settings_phase_two_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:token")
+    monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "1")
+    for name in (
+        "DATA_DIR",
+        "MAX_PARALLEL_DOWNLOADS",
+        "DOWNLOAD_PAUSE_SECONDS",
+        "LYRICS",
+        "NAVIDROME_URL",
+        "NAVIDROME_USER",
+        "NAVIDROME_PASSWORD",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    defaults = Settings.from_env()
+    assert defaults.data_dir == Path("./data")
+    assert defaults.database_path == Path("./data/sync-me-maybe.db")
+    assert defaults.max_parallel_downloads == 2
+    assert defaults.download_pause_seconds == 3.0
+    assert defaults.lyrics is True
+    assert not defaults.navidrome_enabled
+
+    monkeypatch.setenv("NAVIDROME_URL", "http://navidrome:4533/")
+    with pytest.raises(ConfigError, match="NAVIDROME_USER"):
+        Settings.from_env()
+    monkeypatch.setenv("NAVIDROME_USER", "admin")
+    monkeypatch.setenv("NAVIDROME_PASSWORD", "secret")
+    monkeypatch.setenv("MAX_PARALLEL_DOWNLOADS", "3")
+    monkeypatch.setenv("LYRICS", "no")
+    custom = Settings.from_env()
+    assert custom.navidrome_enabled and custom.navidrome_url == "http://navidrome:4533"
+    assert custom.max_parallel_downloads == 3 and custom.lyrics is False
+
+    for name, value in (("MAX_PARALLEL_DOWNLOADS", "0"), ("DOWNLOAD_PAUSE_SECONDS", "-1")):
+        monkeypatch.setenv(name, value)
+        with pytest.raises(ConfigError, match=name):
+            Settings.from_env()
+        monkeypatch.setenv(name, "1")

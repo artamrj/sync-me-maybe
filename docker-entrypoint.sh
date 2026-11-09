@@ -9,10 +9,12 @@ set -eu
 if [ "$(id -u)" = "0" ] && [ -n "${PUID:-}" ] && [ "${PUID}" != "0" ]; then
     PGID="${PGID:-$PUID}"
     tmp_dir="${DOWNLOAD_TMP_DIR:-/tmp/sync-me-maybe}"
-    mkdir -p "$tmp_dir" "${XDG_CACHE_HOME:-/tmp/.cache}"
-    # Only app-owned scratch folders are chowned; the music library is never
-    # changed recursively.
+    data_dir="${DATA_DIR:-/data}"
+    mkdir -p "$tmp_dir" "$data_dir" "${XDG_CACHE_HOME:-/tmp/.cache}"
+    # Only app-owned folders are chowned; the music library is never changed
+    # recursively. The data folder holds only the bot's own SQLite database.
     chown "$PUID:$PGID" "$tmp_dir" "${XDG_CACHE_HOME:-/tmp/.cache}" 2>/dev/null || true
+    chown -R "$PUID:$PGID" "$data_dir" 2>/dev/null || true
 
     if setpriv --reuid="$PUID" --regid="$PGID" --clear-groups true 2>/dev/null; then
         export HOME="${XDG_CACHE_HOME:-/tmp/.cache}"

@@ -7,6 +7,53 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+## 0.13.0 - 2026-11-09
+
+### Added
+
+- Added a SQLite library index in the new `DATA_DIR` that remembers songs by ISRC, YouTube video
+  ID, and artist + title. Duplicates are skipped before downloading, both with provider metadata
+  and again after matching. A background scan at startup indexes the existing music folder,
+  including older downloads and files added by hand.
+- Added `.m3u8` playlist files under `MUSIC_DIR/Playlists` for playlist links. Navidrome imports
+  them automatically, and each song is stored only once.
+- Added parallel downloads (`MAX_PARALLEL_DOWNLOADS`, default `2`) with a polite pause after each
+  real download (`DOWNLOAD_PAUSE_SECONDS`, default `3`).
+- Added synced lyrics from LRCLIB, saved as `.lrc` (or `.txt`) next to each new song (`LYRICS`).
+- Added optional Navidrome scans through the Subsonic API after new songs or playlists are saved
+  (`NAVIDROME_URL`, `NAVIDROME_USER`, `NAVIDROME_PASSWORD`), batched into one scan per burst.
+- Added persistence for the queue, request status messages, and their buttons, so unfinished
+  requests resume after a restart and `Rerun failed`/details/path buttons keep working.
+- Added library index size and Navidrome reachability to `/health`.
+- Added the `/data` volume to `compose.yaml` and the Docker image.
+
+### Changed
+
+- Link downloads are now stored as `Album Artist/Album/01 - Title.<ext>` (or `Artist/Title.<ext>`
+  without an album) instead of flat `Artist - Title.<ext>` files and per-playlist folders.
+  Existing files are left in place and still count as duplicates.
+- Spotify track links now read the public embed page, so matching knows every credited artist
+  and the song duration instead of only the title.
+- Cover art and lyrics are fetched while the audio downloads, and metadata lookup runs in
+  parallel with YouTube Music matching when the duration is known.
+- Matching now penalizes acoustic, unplugged, demo, and extended versions, and any bracketed
+  version note the requested title does not have.
+- Status messages are edited at most every 2.5 seconds while work is running; final states are
+  still shown immediately.
+- `/queue` lists every active download.
+- Bumped `pyproject.toml`, `uv.lock`, and package `__version__` from `0.12.0` to `0.13.0`.
+
+### Fixed
+
+- Fixed Spotify single-track links that matched an alternate version (for example an acoustic
+  release) because only the title was known.
+- Fixed M4A files being indexed without their ISRC.
+
+### Migration
+
+- Mount a persistent `/data` volume (see `compose.yaml` and `DATA_DIR_HOST`). Without it, the
+  database is recreated with the container and the library is rescanned at every start.
+
 ## 0.12.0 - 2026-11-09
 
 ### Added

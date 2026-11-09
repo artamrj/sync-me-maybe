@@ -10,8 +10,10 @@ services:
       PGID: ${PGID:-10}
       MUSIC_DIR: /music
       DOWNLOAD_TMP_DIR: /tmp/sync-me-maybe
+      DATA_DIR: /data
       YTDLP_COOKIES_FILE: ${YTDLP_COOKIES_FILE:-}
     volumes:
       - ${MUSIC_DIR_HOST:-./music}:/music
       - ${DOWNLOAD_TMP_DIR_HOST:-./tmp/sync-me-maybe}:/tmp/sync-me-maybe
+      - ${DATA_DIR_HOST:-./data}:/data
       - ${YTDLP_COOKIES_FILE_HOST:-./cookies.txt}:/config/cookies.txt:ro

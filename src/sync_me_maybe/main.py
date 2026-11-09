@@ -19,14 +19,17 @@ def main() -> None:
 
     logging.basicConfig(level=getattr(logging, settings.log_level, logging.INFO))
     try:
-        # Create both directories before Telegram starts so permission problems
+        # Create the directories before Telegram starts so permission problems
         # are reported immediately instead of during the first download.
         settings.music_dir.mkdir(parents=True, exist_ok=True)
         settings.download_tmp_dir.mkdir(parents=True, exist_ok=True)
+        if settings.data_dir:
+            settings.data_dir.mkdir(parents=True, exist_ok=True)
     except PermissionError as exc:
         raise SystemExit(
-            "Cannot write to the configured music/temp directory. "
-            "Check MUSIC_DIR and DOWNLOAD_TMP_DIR permissions, or set them to writable paths. "
+            "Cannot write to the configured music/temp/data directory. "
+            "Check MUSIC_DIR, DOWNLOAD_TMP_DIR, and DATA_DIR permissions, "
+            "or set them to writable paths. "
             f"Original error: {exc}"
         ) from exc
     build_application(settings).run_polling(allowed_updates=Update.ALL_TYPES)

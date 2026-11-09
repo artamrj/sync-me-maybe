@@ -64,6 +64,9 @@ class SpotifyProvider:
 
     def _resolve_track_sync(self, link: ClassifiedLink) -> ResolvedTrack:
         """Build the YouTube Music search query for one Spotify item."""
+        embedded = self._embed_track(link.url)
+        if embedded:
+            return embedded
         spotify = self._spotify_oembed(link.url)
         if spotify:
             query, title, artist, album = spotify
@@ -83,6 +86,25 @@ class SpotifyProvider:
             artist=artist,
             album=album,
         )
+
+    def _embed_track(self, url: str) -> ResolvedTrack | None:
+        """Read title, all artists, and duration from the public track embed page.
+
+        oEmbed only returns the title, which makes matching guess the artist.
+        """
+        embed_url = spotify_track_embed_url(url)
+        if not embed_url:
+            return None
+        try:
+            response = requests.get(
+                embed_url,
+                headers={"User-Agent": "Mozilla/5.0", "Accept-Language": "en"},
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+        except requests.RequestException:
+            return None
+        return track_from_spotify_embed(response.text, url)
 
     def _collection_sync(self, link: ClassifiedLink) -> ExpandedCollection:
         """Return track items from a public playlist or album page."""
@@ -250,6 +272,53 @@ def spotify_embed_url(url: str) -> str | None:
     if len(parts) < 2 or parts[0] not in {"playlist", "album"}:
         return None
     return f"https://open.spotify.com/embed/{parts[0]}/{parts[1]}"
+
+
+def spotify_track_embed_url(url: str) -> str | None:
+    """Build the public embed URL for a track link (including ``/intl-xx/`` links)."""
+    parsed = urlparse(url)
+    if parsed.netloc.lower().removeprefix("www.") != "open.spotify.com":
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if "track" not in parts:
+        return None
+    index = parts.index("track")
+    if index + 1 >= len(parts):
+        return None
+    return f"https://open.spotify.com/embed/track/{parts[index + 1]}"
+
+
+def track_from_spotify_embed(html: str, source_url: str) -> ResolvedTrack | None:
+    """Parse the ``__NEXT_DATA__`` JSON of a Spotify track embed page."""
+    soup = BeautifulSoup(html, "html.parser")
+    script = soup.find("script", id="__NEXT_DATA__")
+    if script is None or not script.string:
+        return None
+    try:
+        data = json.loads(script.string)
+    except ValueError:
+        return None
+    entity = _nested_get(data, "props", "pageProps", "state", "data", "entity")
+    if not isinstance(entity, dict) or entity.get("type") not in {None, "track"}:
+        return None
+    title = clean_title(entity.get("name") or entity.get("title"))
+    artists = [
+        name
+        for artist in entity.get("artists") or []
+        if isinstance(artist, dict) and (name := clean_title(artist.get("name")))
+    ]
+    if not title or not artists:
+        return None
+    artist = ", ".join(artists)
+    query = f"{artists[0]} {title}"
+    return ResolvedTrack(
+        source_url=source_url,
+        download_url=f"ytsearch1:{query}",
+        search_query=query,
+        title=title,
+        artist=artist,
+        duration_seconds=duration_from_ms(entity.get("duration")),
+    )
 
 
 def spotify_playlist_id(url: str) -> str | None:

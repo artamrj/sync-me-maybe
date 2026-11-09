@@ -36,7 +36,18 @@ VARIANT_WORDS = (
     "a cappella",
     "mashup",
     "tribute",
+    "acoustic",
+    "unplugged",
+    "demo",
+    "extended",
 )
+# Bracketed notes that do not change which recording it is.
+_NEUTRAL_NOTE = re.compile(
+    r"\b(?:feat|ft|featuring|with|remaster(?:ed)?|radio edit|explicit|clean|original|"
+    r"single|album version|official|audio|from)\b",
+    re.I,
+)
+_NOTE = re.compile(r"[\(\[]([^\)\]]*)[\)\]]")
 
 _ARTIST_SPLIT = re.compile(r"\s*(?:,|;|&|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b)\s*", re.I)
 _BRACKETS = re.compile(r"\s*[\(\[][^\)\]]*[\)\]]\s*")
@@ -192,6 +203,12 @@ def variant_penalty(target_title: str, candidate_title: str) -> float:
         token = f" {word} "
         if token in found and token not in wanted:
             penalty += 35
+    # Any other bracketed note the request lacks ("(Sped Up Version)", "(Piano)")
+    # costs a little, so the exact title wins ties between versions.
+    wanted_notes = {normalize(note) for note in _NOTE.findall(target_title)}
+    for note in _NOTE.findall(candidate_title):
+        if normalize(note) not in wanted_notes and not _NEUTRAL_NOTE.search(note):
+            penalty += 8
     return penalty
 
 

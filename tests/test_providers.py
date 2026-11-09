@@ -33,7 +33,12 @@ from sync_me_maybe.music.providers.public_scrape import (
     tracks_from_entries,
 )
 from sync_me_maybe.music.providers.shazam import ShazamProvider
-from sync_me_maybe.music.providers.spotify import SpotifyProvider, track_from_spotify_playlist_item
+from sync_me_maybe.music.providers.spotify import (
+    SpotifyProvider,
+    spotify_track_embed_url,
+    track_from_spotify_embed,
+    track_from_spotify_playlist_item,
+)
 from sync_me_maybe.music.providers.youtube import YouTubeProvider
 from sync_me_maybe.music.resolver import LinkResolver, ResolveError
 from sync_me_maybe.music.urls import (
@@ -100,6 +105,7 @@ async def test_link_resolver_maps_provider_errors() -> None:
 @pytest.mark.asyncio
 async def test_spotify_resolution_prefers_oembed_then_metadata_then_slug() -> None:
     provider = SpotifyProvider()
+    provider._embed_track = Mock(return_value=None)  # type: ignore[method-assign]
     link = classify_url("https://open.spotify.com/track/artist-song")
 
     with (
@@ -664,3 +670,33 @@ async def test_apple_track_links_use_itunes_lookup_for_real_track_metadata() -> 
     assert resolved.download_url == (
         "ytsearch1:Daft Punk, Pharrell Williams & Nile Rodgers Get Lucky"
     )
+
+
+EMBED_HTML = (
+    '<script id="__NEXT_DATA__" type="application/json">'
+    '{"props":{"pageProps":{"state":{"data":{"entity":{"type":"track",'
+    '"name":"Die With A Smile","duration":251667,'
+    '"artists":[{"name":"Lady Gaga"},{"name":"Bruno Mars"}]}}}}}}</script>'
+)
+
+
+@pytest.mark.asyncio
+async def test_spotify_track_embed_gives_all_artists_and_duration() -> None:
+    assert spotify_track_embed_url("https://open.spotify.com/intl-de/track/abc?si=1") == (
+        "https://open.spotify.com/embed/track/abc"
+    )
+    assert spotify_track_embed_url("https://open.spotify.com/playlist/abc") is None
+    assert spotify_track_embed_url("https://spotify.link/abc") is None
+    assert track_from_spotify_embed("<html></html>", "src") is None
+
+    response = Mock()
+    response.text = EMBED_HTML
+    response.raise_for_status.return_value = None
+    with patch("sync_me_maybe.music.providers.spotify.requests.get", return_value=response):
+        resolved = await SpotifyProvider().resolve_track(
+            classify_url("https://open.spotify.com/track/abc")
+        )
+    assert resolved.title == "Die With A Smile"
+    assert resolved.artist == "Lady Gaga, Bruno Mars"
+    assert resolved.duration_seconds == 252
+    assert resolved.download_url == "ytsearch1:Lady Gaga Die With A Smile"

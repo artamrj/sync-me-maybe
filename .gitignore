@@ -9,3 +9,4 @@ __pycache__/
 /tmp/
 /sync-me-maybe/*
 .DS_Store
+/data/

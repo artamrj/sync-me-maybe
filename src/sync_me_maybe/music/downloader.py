@@ -52,6 +52,7 @@ class DownloadedTrack:
     temp_file: Path
     info: TrackInfo
     duration_seconds: int | None = None
+    video_id: str | None = None
 
 
 class YtDlpDownloader:
@@ -165,6 +166,7 @@ class YtDlpDownloader:
             temp_file=temp_file,
             info=_track_info(info, resolved),
             duration_seconds=round(duration) if isinstance(duration, int | float) else None,
+            video_id=_string(info.get("id")) if isinstance(info, dict) else None,
         )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import UTC, datetime
 
 from telegram import Message
@@ -64,14 +65,9 @@ def request_keyboard(runtime: BotRuntime, request: RequestState):
     """Build the action keyboard appropriate for the request's current state."""
     source_url = request.source_urls[0] if len(request.source_urls) == 1 else None
     relative_path = request.paths[0] if request.total == 1 and request.paths else None
-    done = request.completed + request.skipped + request.failed
     # Finished requests should not show refresh/cancel buttons, but can still
     # expose source URLs and single stored paths.
-    is_terminal = (
-        request.cancelled
-        or request.stage in {StatusStage.DONE, StatusStage.FAILED, StatusStage.CANCELLED}
-        or done >= request.total
-    )
+    is_terminal = request_is_terminal(request)
     return status_keyboard(
         source_url=source_url,
         relative_path=relative_path,
@@ -91,21 +87,67 @@ def request_keyboard(runtime: BotRuntime, request: RequestState):
     )
 
 
+def request_is_terminal(request: RequestState) -> bool:
+    done = request.completed + request.skipped + request.failed
+    return (
+        request.cancelled
+        or request.stage in {StatusStage.DONE, StatusStage.FAILED, StatusStage.CANCELLED}
+        or done >= request.total
+    )
+
+
 async def update_request(
-    runtime: BotRuntime, application: Application, request: RequestState
+    runtime: BotRuntime, application: Application, request: RequestState, *, force: bool = False
 ) -> None:
-    """Edit the Telegram status message for a RequestState."""
-    if request.status_message_id <= 0:
-        return
+    """Persist a RequestState and edit its Telegram status message.
+
+    Edits are throttled per message: with parallel downloads several tracks can
+    finish within a second, so intermediate updates are coalesced into one
+    trailing edit. Final states are always sent immediately.
+    """
     if request.cancelled:
         request.stage = StatusStage.CANCELLED
-    await safe_edit_message(
-        application.bot,
-        request.chat_id,
-        request.status_message_id,
-        await render_request_text(runtime, request),
-        reply_markup=request_keyboard(runtime, request),
-    )
+    runtime.save_request(request)
+    if request.status_message_id <= 0:
+        return
+    interval = runtime.status_edit_interval
+    wait = request.last_edit_at + interval - time.monotonic()
+    if force or interval <= 0 or wait <= 0 or request_is_terminal(request):
+        if request.pending_edit and not request.pending_edit.done():
+            request.pending_edit.cancel()
+        request.pending_edit = None
+        await _edit_request(runtime, application, request)
+        return
+    if request.pending_edit is None or request.pending_edit.done():
+        request.pending_edit = asyncio.create_task(
+            _delayed_edit(runtime, application, request, wait)
+        )
+
+
+async def _delayed_edit(
+    runtime: BotRuntime, application: Application, request: RequestState, delay: float
+) -> None:
+    try:
+        await asyncio.sleep(delay)
+    except asyncio.CancelledError:
+        return
+    request.pending_edit = None
+    await _edit_request(runtime, application, request)
+
+
+async def _edit_request(
+    runtime: BotRuntime, application: Application, request: RequestState
+) -> None:
+    async with request.edit_lock:
+        # Render inside the lock so the last edit always shows the latest state.
+        request.last_edit_at = time.monotonic()
+        await safe_edit_message(
+            application.bot,
+            request.chat_id,
+            request.status_message_id,
+            await render_request_text(runtime, request),
+            reply_markup=request_keyboard(runtime, request),
+        )
 
 
 async def send_request_status(
@@ -126,6 +168,8 @@ async def send_request_status(
     message_id = getattr(status_message, "message_id", 0)
     if isinstance(message_id, int):
         request.status_message_id = message_id
+        request.last_edit_at = time.monotonic()
+    runtime.save_request(request)
     return status_message
 
 

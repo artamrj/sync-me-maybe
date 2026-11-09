@@ -57,6 +57,42 @@ def track_destination(music_dir: Path, info: TrackInfo, extension: str = ".mp3")
     return music_dir / f"{stem}{suffix}"
 
 
+def library_destination(
+    music_dir: Path,
+    *,
+    title: str | None,
+    artist: str | None,
+    album: str | None = None,
+    album_artist: str | None = None,
+    track_number: int | None = None,
+    disc_number: int | None = None,
+    extension: str = ".m4a",
+) -> Path:
+    """Build ``Artist/Album/01 - Title.ext`` (or ``Artist/Title.ext`` without an album).
+
+    Each song is stored once; playlists reference it through ``.m3u8`` files.
+    """
+    folder_artist = sanitize_filename(album_artist or folder_artist_name(artist), "Unknown Artist")
+    name = sanitize_filename(title, "Unknown Title")
+    suffix = extension if extension.startswith(".") else f".{extension}"
+    if not album:
+        return music_dir / folder_artist / f"{name}{suffix}"
+    if track_number:
+        prefix = f"{track_number:02d}"
+        if disc_number and disc_number > 1:
+            prefix = f"{disc_number}-{prefix}"
+        name = f"{prefix} - {name}"
+    return music_dir / folder_artist / sanitize_filename(album, "Unknown Album") / f"{name}{suffix}"
+
+
+def folder_artist_name(artist: str | None) -> str | None:
+    """Use the first credited artist for folder names (``A, B & C`` -> ``A``)."""
+    if not artist:
+        return None
+    first = re.split(r"\s*(?:,|;|&|\bfeat\.?\b|\bft\.?\b)\s*", artist, maxsplit=1)[0]
+    return first.strip() or artist.strip()
+
+
 def trustworthy_collection_owner(value: str | None) -> bool:
     """Return whether provider owner metadata is a display name, not a URL."""
     if not value:

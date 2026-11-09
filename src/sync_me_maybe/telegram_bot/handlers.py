@@ -11,15 +11,25 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, ContextTypes
 
+from sync_me_maybe.library.index import youtube_video_id
+from sync_me_maybe.library.playlists import (
+    PlaylistEntry,
+    PlaylistState,
+    playlist_name,
+    write_playlist,
+)
 from sync_me_maybe.library.storage import (
     StoreResult,
     TrackInfo,
     find_existing_track,
+    library_destination,
     store_completed_file,
     track_destination,
 )
 from sync_me_maybe.music.collections import CollectionResolveError
 from sync_me_maybe.music.downloader import DownloadError, planned_track_info
+from sync_me_maybe.music.enrichment import discard as discard_prefetch
+from sync_me_maybe.music.lyrics import write_lyrics_sidecar
 from sync_me_maybe.music.resolver import ResolvedTrack, ResolveError
 from sync_me_maybe.music.urls import LinkKind, LinkScope, classify_url, extract_urls
 from sync_me_maybe.queueing.queue import JobKind, QueuedJob, RetryJob
@@ -681,6 +691,14 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         else:
             request.completed += 1
         request.paths.append(result.relative_path)
+        await record_playlist_entry(
+            runtime,
+            request,
+            job,
+            resolved if isinstance(resolved, ResolvedTrack) else None,
+            result.relative_path,
+            info,
+        )
         done = request.completed + request.skipped + request.failed
         request.stage = StatusStage.DONE if done >= request.total else StatusStage.DOWNLOADING
         if done >= request.total:
@@ -717,49 +735,81 @@ async def download_and_store(
 ) -> tuple[StoreResult, TrackInfo]:
     """Download, tag, and store one resolved track, skipping known duplicates.
 
-    When provider metadata already fixes the final filename, the library is
-    checked before downloading so repeated links and playlists are fast.
+    The library index is checked twice before downloading: with provider
+    metadata, and again after matching (YouTube video ID, ISRC, canonical
+    artist/title). Cover art and lyrics are fetched while the audio downloads.
     """
     bot = application.bot
     music_dir = runtime.settings.music_dir
     planned = planned_track_info(resolved)
-    if resolved.title and resolved.artist:
-        existing = find_existing_track(track_destination(music_dir, planned))
-        if existing:
-            return StoreResult(existing, existing.relative_to(music_dir).as_posix(), True), planned
+    existing = known_track(
+        runtime,
+        planned,
+        isrc=resolved.isrc,
+        video_id=youtube_video_id(resolved.download_url),
+        check_legacy_path=bool(resolved.title and resolved.artist),
+    )
+    if existing:
+        return existing, planned
 
     prepared = await runtime.enricher.prepare(resolved)
     resolved = prepared.resolved
-    await safe_chat_action(bot, job.chat_id, ChatAction.UPLOAD_DOCUMENT)
-    if request:
-        request.stage = StatusStage.DOWNLOADING
-        request.download_started_at = request.download_started_at or datetime.now(UTC)
-        request.current = track_label(resolved) or "Direct YouTube Music link."
-        request.detail = None
-        await update_request(runtime, application, request)
-    else:
-        await safe_edit_message(
-            bot,
-            job.chat_id,
-            job.status_message_id,
-            render_status(
-                StatusStage.DOWNLOADING,
-                source,
-                job_detail(job, resolved.search_query or "Direct YouTube Music link."),
-            ),
-        )
-    downloaded = await runtime.downloader.download(
-        resolved, cancel_check=request.cancel_event.is_set if request else None
+    canonical = prepared.canonical
+    existing = known_track(
+        runtime,
+        TrackInfo(canonical.title, canonical.artist) if canonical else planned,
+        isrc=prepared.isrc,
+        video_id=prepared.video_id,
     )
+    if existing:
+        return existing, planned
+
+    extras = runtime.enricher.prefetch(prepared)
+    try:
+        await safe_chat_action(bot, job.chat_id, ChatAction.UPLOAD_DOCUMENT)
+        if request:
+            request.stage = StatusStage.DOWNLOADING
+            request.download_started_at = request.download_started_at or datetime.now(UTC)
+            request.current = track_label(resolved) or "Direct YouTube Music link."
+            request.detail = None
+            await update_request(runtime, application, request)
+        else:
+            await safe_edit_message(
+                bot,
+                job.chat_id,
+                job.status_message_id,
+                render_status(
+                    StatusStage.DOWNLOADING,
+                    source,
+                    job_detail(job, resolved.search_query or "Direct YouTube Music link."),
+                ),
+            )
+        downloaded = await runtime.downloader.download(
+            resolved, cancel_check=request.cancel_event.is_set if request else None
+        )
+    except BaseException:
+        discard_prefetch(extras)
+        raise
     if request:
         set_single_track_context(request, downloaded.info)
     if request_cancelled(request):
         # If cancellation happened just after the blocking download returned,
         # remove the temp file before surfacing the cancellation.
+        discard_prefetch(extras)
         downloaded.temp_file.unlink(missing_ok=True)
         raise DownloadError("Cancelled by user.")
-    await runtime.enricher.finalize(downloaded, prepared)
-    destination = track_destination(music_dir, downloaded.info, downloaded.temp_file.suffix)
+    final = await runtime.enricher.finalize(downloaded, prepared, extras)
+    tags = final.tags
+    destination = library_destination(
+        music_dir,
+        title=tags.title or downloaded.info.title,
+        artist=tags.artist or downloaded.info.artist,
+        album=tags.album,
+        album_artist=tags.album_artist,
+        track_number=tags.track_number,
+        disc_number=tags.disc_number,
+        extension=downloaded.temp_file.suffix,
+    )
     if request:
         request.stage = StatusStage.SAVING
         request.current = destination.name
@@ -774,7 +824,73 @@ async def download_and_store(
     result = store_completed_file(
         downloaded.temp_file, destination, music_dir, match_any_format=True
     )
+    if not result.skipped:
+        await asyncio.to_thread(write_lyrics_sidecar, result.path, final.lyrics)
+        runtime.request_library_scan()
+    runtime.library.add(
+        result.relative_path,
+        isrc=tags.isrc,
+        video_id=prepared.video_id
+        or youtube_video_id(resolved.download_url)
+        or downloaded.video_id,
+        artist=tags.artist,
+        title=tags.title,
+        source_url=resolved.source_url,
+    )
+    if runtime.settings.download_pause_seconds > 0:
+        # Be polite to YouTube between real downloads; skipped tracks never wait.
+        await asyncio.sleep(runtime.settings.download_pause_seconds)
     return result, downloaded.info
+
+
+def known_track(
+    runtime: BotRuntime,
+    info: TrackInfo,
+    *,
+    isrc: str | None = None,
+    video_id: str | None = None,
+    check_legacy_path: bool = False,
+) -> StoreResult | None:
+    """Return a skipped StoreResult when the library already has this track."""
+    music_dir = runtime.settings.music_dir
+    relative = runtime.library.lookup(
+        isrc=isrc, video_id=video_id, artist=info.artist, title=info.title
+    )
+    if relative:
+        return StoreResult(music_dir / relative, relative, True)
+    if check_legacy_path:
+        # Pre-0.13 flat layout ("Artist - Title.ext"), even before the index scan finishes.
+        existing = find_existing_track(track_destination(music_dir, info))
+        if existing:
+            return StoreResult(existing, existing.relative_to(music_dir).as_posix(), True)
+    return None
+
+
+async def record_playlist_entry(
+    runtime: BotRuntime,
+    request: RequestState,
+    job: QueuedJob,
+    resolved: ResolvedTrack | None,
+    relative_path: str,
+    info: TrackInfo | None,
+) -> None:
+    """Add a stored/skipped track to its playlist file, in playlist order."""
+    collection_url = resolved.collection_url if resolved else None
+    playlist = request.playlists.get(collection_url or "")
+    if playlist is None or job.request_index is None:
+        return
+    playlist.entries[job.request_index] = PlaylistEntry(
+        relative_path=relative_path,
+        title=(info.title if info else None) or (resolved.title if resolved else None),
+        artist=(info.artist if info else None) or (resolved.artist if resolved else None),
+        duration_seconds=resolved.duration_seconds if resolved else None,
+    )
+    try:
+        await asyncio.to_thread(write_playlist, runtime.settings.music_dir, playlist)
+    except OSError:
+        LOGGER.warning("Could not write playlist %s", playlist.name, exc_info=True)
+        return
+    runtime.request_library_scan()
 
 
 async def process_collection_job(
@@ -844,6 +960,13 @@ async def process_collection_job(
         request.collection_title = collection.title
         if len(request.source_urls) <= 1:
             request.source_label = source_display(classified)
+        if classified.scope == LinkScope.PLAYLIST:
+            # Tracks are stored once in the library; the playlist is an .m3u8 file.
+            request.playlists[classified.url] = PlaylistState(
+                name=playlist_name(collection.title, collection.owner),
+                source_url=classified.url,
+            )
+        request.expanded_collections.append(classified.url)
         await update_request(runtime, application, request)
 
         for index, track in enumerate(tracks, start=1):

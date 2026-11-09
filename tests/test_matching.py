@@ -136,3 +136,16 @@ def test_matcher_uses_songs_first_then_strict_video_fallback() -> None:
     assert [kind for _, kind in video_client.calls] == ["songs", "videos"]
 
     assert YouTubeMusicMatcher(FakeYTMusic({})).find(MatchTarget("Get Lucky", "Daft Punk")) is None
+
+
+def test_score_prefers_exact_title_over_unrequested_versions_without_duration() -> None:
+    target = MatchTarget("Die With A Smile", "Lady Gaga")
+    acoustic = Candidate("Die With A Smile (Acoustic)", ("Lady Gaga",), 251, "acoustic")
+    piano = Candidate("Die With A Smile (Piano Version)", ("Lady Gaga",), 250, "piano")
+    original = Candidate("Die With A Smile", ("Lady Gaga", "Bruno Mars"), 251, "original")
+    featured = Candidate("Die With A Smile (feat. Bruno Mars)", ("Lady Gaga",), 251, "feat")
+
+    best = best_candidate(target, [acoustic, piano, original])
+    assert best is not None and best[0].video_id == "original"
+    assert score(target, piano).total < score(target, original).total
+    assert score(target, featured).total == score(target, original).total

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from telegram import Update
 from telegram.constants import ChatType
 from telegram.ext import ContextTypes
@@ -84,7 +86,14 @@ async def health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await message.reply_text(f"Health check failed: cannot write to music dir: {exc}")
         return
 
-    await message.reply_text("Health check ok: music dir is writable.")
+    lines = [
+        "Health check ok: music dir is writable.",
+        f"Library index: {runtime.library.count()} track(s).",
+    ]
+    if runtime.navidrome is not None:
+        reachable = await asyncio.to_thread(runtime.navidrome.ping)
+        lines.append("Navidrome: reachable." if reachable else "Navidrome: not reachable.")
+    await message.reply_text("\n".join(lines))
 
 
 async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

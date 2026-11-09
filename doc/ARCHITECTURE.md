@@ -112,7 +112,12 @@ Environment variables:
 - `MAX_COLLECTION_TRACKS`: default `1000`.
 - `UPLOAD_BATCH_WINDOW_SECONDS`: default `2`.
 - `AUDIO_FORMAT`: `m4a` (default), `opus`, or `mp3`.
-- `METADATA_LOOKUP`: default `true`; disables YouTube Music, Deezer, and cover-art requests when `false`.
+- `METADATA_LOOKUP`: default `true`; disables YouTube Music, Deezer, cover-art, and lyrics requests when `false`.
+- `DATA_DIR`: default `./data`; holds `sync-me-maybe.db`. `Settings(data_dir=None)` keeps the database in memory (tests).
+- `MAX_PARALLEL_DOWNLOADS`: default `2`, range 1-8.
+- `DOWNLOAD_PAUSE_SECONDS`: default `3`.
+- `LYRICS`: default `true`.
+- `NAVIDROME_URL`, `NAVIDROME_USER`, `NAVIDROME_PASSWORD`: optional; all three are required together.
 - `LOG_LEVEL`: default `INFO`.
 
 Validation:
@@ -177,7 +182,8 @@ The bot runs in polling mode rather than webhook mode.
 
 File: `src/sync_me_maybe/telegram_bot/runtime.py`
 
-This module holds shared in-memory runtime state.
+This module holds shared runtime state and services. Requests, queue jobs, and button data are
+mirrored to SQLite through `telegram_bot.persistence`.
 
 Main names:
 
@@ -216,9 +222,14 @@ Important `RequestState` fields:
 `BotRuntime` owns:
 
 - `settings`
-- `path_callbacks`: in-memory token-to-path/result data for inline buttons.
-- `issue_callbacks`: in-memory token-to-skipped/failed details.
-- `rerun_failed_callbacks`: in-memory token-to-failed-job retry data.
+- `path_callbacks`: token-to-path data for inline buttons (token = hash of owner and path).
+- `issue_callbacks`: token-to-skipped/failed details (token = request ID).
+- `rerun_failed_callbacks`: token-to-failed-job retry data (token = request ID).
+- `db`, `store`: shared `Database` and `StateStore`.
+- `library`: `LibraryIndex` used for duplicate checks.
+- `navidrome`: optional `NavidromeClient`.
+- `enricher`: `TrackEnricher`.
+- `status_edit_interval`: minimum seconds between status-message edits (2.5).
 - `queue`: the global `DownloadQueue`.
 - `resolver`: `LinkResolver` for single-track links.
 - `collection_resolver`: `CollectionResolver` for playlists/albums.
@@ -234,7 +245,9 @@ Important methods:
 - `remember_results(request)`: creates a callback token for multi-result display.
 - `process_job(job, application)`: dispatches queue jobs by kind.
 
-Runtime state is in-memory only. Restarting the process clears queue, request state, callback tokens, upload batches, and progress state.
+`restore_state()` reloads requests, button data, and queued jobs at startup and drops a
+collection job whose children were already queued. Upload/link batch buffers (a 2-second window)
+and guest grants remain in memory only.
 
 ### `telegram_bot.commands`
 
@@ -294,29 +307,35 @@ Single link job flow:
 
 1. Mark request as preparing.
 2. Resolve source into a `ResolvedTrack`.
-3. If provider metadata already fixes the filename and the library has that track in any
-   audio format, record it as skipped without downloading.
+3. `known_track` checks the library index (ISRC, YouTube video ID, artist + title) and the
+   pre-0.13 flat filename. A hit is recorded as skipped without downloading.
 4. `TrackEnricher.prepare` looks up canonical metadata and replaces `ytsearch1:` with the
-   best-scoring YouTube Music result.
-5. Mark request as downloading.
-6. Download through `YtDlpDownloader` in the configured `AUDIO_FORMAT`.
-7. `TrackEnricher.finalize` writes tags and cover art into the temp file.
-8. Compute final path with `track_destination` using the downloaded file extension.
-9. Mark request as saving.
-10. Move completed file into the library with `store_completed_file(match_any_format=True)`.
-11. Update counts and paths.
-12. Render final success, skipped, or failed state.
+   best-scoring YouTube Music result (in parallel when the duration is known).
+5. `known_track` runs again with the matched video ID, ISRC, and canonical artist/title.
+6. `TrackEnricher.prefetch` starts cover-art and lyrics downloads.
+7. Mark request as downloading and download through `YtDlpDownloader`.
+8. `TrackEnricher.finalize` waits for the prefetch, writes tags and cover art.
+9. Compute the final path with `library_destination` (`Album Artist/Album/NN - Title.ext`).
+10. Mark request as saving and move the file with `store_completed_file(match_any_format=True)`.
+11. Write the lyrics sidecar, add the file to the library index, and request a Navidrome scan.
+12. Sleep `DOWNLOAD_PAUSE_SECONDS` (real downloads only).
+13. Update counts and paths, and add the track to its playlist file when it belongs to one.
+14. Render final success, skipped, or failed state.
 
-Steps 3-10 live in `download_and_store`.
+Steps 3-12 live in `download_and_store`; step 13 uses `record_playlist_entry`.
 
 Collection job flow:
 
 1. Mark request as expanding.
 2. Expand playlist/album into `TrackSearchItem` objects.
 3. Increase request total to account for child tracks.
-4. Convert each track into a `ResolvedTrack` using `ytsearch1:<artist title>`.
-5. Enqueue child `LINK` jobs.
-6. Child jobs reuse the normal link pipeline.
+4. For playlist links, create a `PlaylistState` in `RequestState.playlists`.
+5. Record the collection URL in `RequestState.expanded_collections` and persist the request.
+6. Convert each track into a `ResolvedTrack` using `ytsearch1:<artist title>`, carrying
+   duration and ISRC when the provider exposed them.
+7. Enqueue child `LINK` jobs (`request_index` is the playlist position).
+8. Child jobs reuse the normal link pipeline; stored or skipped children rewrite the playlist
+   `.m3u8` file in playlist order.
 
 Cancellation:
 
@@ -412,7 +431,8 @@ Supported callback data:
 - `refresh:<request_id>`: re-render current request status.
 - `cancel:<request_id>`: cancel pending jobs and signal active job cancellation.
 
-Callback data is resolved against in-memory runtime dictionaries. Old buttons stop working after process restart.
+Callback data is resolved against runtime dictionaries that are persisted to SQLite and reloaded
+at startup, so buttons keep working after a restart for 30 days.
 
 ### `telegram_bot.safe_api`
 
@@ -443,7 +463,7 @@ Directory: `src/sync_me_maybe/queueing`
 
 File: `src/sync_me_maybe/queueing/queue.py`
 
-This module owns serialized job execution.
+This module owns job execution with a small worker pool.
 
 Main names:
 
@@ -478,13 +498,13 @@ Main names:
 
 `DownloadQueue` implementation:
 
-- Uses an in-memory `collections.deque`.
+- Uses a `collections.deque` plus an optional `JobStore` (`StateStore`) for persistence.
 - Uses one `asyncio.Condition`.
-- Has one background worker task.
-- Processes exactly one job at a time.
-- Keeps an `_active` job for status and queue position.
-- Tracks delayed retry tasks for jobs waiting on backoff.
-- Catches unexpected job exceptions so the worker survives individual failures.
+- Runs `workers` background tasks (`MAX_PARALLEL_DOWNLOADS`).
+- Keeps an `_active` dict of running jobs for status and queue positions.
+- Tracks delayed retry tasks for jobs waiting on backoff, persisted with a `not_before` time.
+- Persisted jobs are deleted only after they finish; jobs interrupted by shutdown run again.
+- Catches unexpected job exceptions so workers survive individual failures.
 
 Queue operations:
 
@@ -493,10 +513,11 @@ Queue operations:
 - `position_of(job_id) -> int | None`: find active or pending position.
 - `cancel_request(request_id) -> int`: remove pending and delayed retry jobs belonging to a request.
 - `retry_later(job, delay_seconds)`: re-enqueue a job after retry backoff.
-- `start(processor)`: start the worker.
-- `stop()`: cancel the worker at shutdown.
+- `restore(jobs)`: re-add persisted jobs at startup, honoring retry delays.
+- `start(processor)`: start the worker pool.
+- `stop()`: cancel workers at shutdown; persisted jobs remain for the next start.
 
-The queue and delayed retries are not persisted. They are lost on restart.
+Queue positions: active jobs are `0`; pending job `i` (1-based) is `i + active count`.
 
 ## 6. Music Layer
 
@@ -821,28 +842,30 @@ Main names:
 
 - `TrackInfo`
 - `StoreResult`
-- `track_destination(music_dir, info, extension=".mp3")`
+- `library_destination(music_dir, title=..., artist=..., album=..., album_artist=..., track_number=..., disc_number=..., extension=...)`
+- `track_destination(music_dir, info, extension=".mp3")` (pre-0.13 flat layout, used only to find older files)
 - `upload_destination(music_dir, filename)`
 - `store_completed_file(source, destination, music_dir, skip_existing=True)`
 
 Link download destination format:
 
 ```text
-Artist - Title.<ext>
-Title.<ext>
-Owner - Collection/Artist - Title.<ext>
-Collection(<collection URL>)/Artist - Title.<ext>
+Album Artist/Album/01 - Title.<ext>
+Album Artist/Album/2-01 - Title.<ext>   (disc 2)
+Artist/Title.<ext>                      (no known album)
 ```
 
 `<ext>` follows `AUDIO_FORMAT` (`.m4a`, `.opus`, or `.mp3`).
 
 Rules:
 
-- Artist is omitted from the filename when missing.
-- Title fallback: `Unknown Title`.
-- Collection folders use `Owner - Collection` when the owner is a real display name.
-- URL-like collection owners are ignored.
-- When a collection owner is missing or URL-like and the source URL is available, collection folders use `Collection(<collection URL>)`.
+- The folder artist is the album artist, else the first credited artist.
+- Track numbers are only used when canonical metadata provides them.
+- Fallbacks: `Unknown Artist`, `Unknown Album`, `Unknown Title`.
+- Playlists never create folders; see `library.playlists`.
+
+The pre-0.13 flat layout (`Artist - Title.<ext>` and `Owner - Collection/Artist - Title.<ext>`)
+is still computed by `track_destination` so existing files are found as duplicates.
 
 Upload destination format:
 
@@ -866,6 +889,56 @@ Return value:
 - `StoreResult.path`: absolute or configured destination path.
 - `StoreResult.relative_path`: path relative to `MUSIC_DIR` when possible.
 - `StoreResult.skipped`: whether an existing file was skipped.
+
+### `library.index`
+
+File: `src/sync_me_maybe/library/index.py`
+
+- `LibraryIndex.lookup(isrc=, video_id=, artist=, title=)` returns the relative path of an
+  existing copy, checking ISRC, then video ID, then the artist/title key. Rows whose file was
+  deleted are removed on lookup.
+- `LibraryIndex.add(...)` records stored downloads and uploads.
+- `LibraryIndex.scan()` walks `MUSIC_DIR` (skipping hidden and `@` NAS folders), indexes new or
+  changed audio files from tags or `Artist - Title`/`NN - Title` filenames, and forgets missing
+  files. It runs in a thread at startup.
+- `artist_key` uses the first credited artist; `title_key` drops featured-artist and remaster
+  notes but keeps version words such as live or remix.
+- `youtube_video_id(url)` parses watch, short, and `youtu.be` links.
+
+### `library.playlists`
+
+File: `src/sync_me_maybe/library/playlists.py`
+
+- `PlaylistState` (name, source URL, entries by position) lives on `RequestState.playlists`.
+- `write_playlist` atomically rewrites `MUSIC_DIR/Playlists/<name>.m3u8` with `#EXTM3U`,
+  `#PLAYLIST`, `#EXTINF` lines and paths relative to the playlist file.
+- `playlist_name` uses `Owner - Title` when the owner is a real display name.
+
+### `library.navidrome`
+
+File: `src/sync_me_maybe/library/navidrome.py`
+
+- `NavidromeClient.call` uses Subsonic token auth (`t = md5(password + salt)`), JSON format.
+- `request_scan()` debounces `startScan` (15 seconds after the last request); `flush()` runs a
+  pending scan at shutdown; `ping()` backs `/health`.
+
+### `music.lyrics`
+
+File: `src/sync_me_maybe/music/lyrics.py`
+
+- `LrclibClient.fetch(title, artist, album, duration)` calls `lrclib.net/api/get`.
+- `write_lyrics_sidecar` writes `.lrc` for synced lyrics or `.txt` for plain lyrics, never
+  overwriting an existing file and skipping instrumentals.
+
+### `database` and `telegram_bot.persistence`
+
+Files: `src/sync_me_maybe/database.py`, `src/sync_me_maybe/telegram_bot/persistence.py`
+
+- `Database` wraps one SQLite connection (WAL mode) shared by the event loop and worker threads
+  under a lock. Tables: `tracks`, `jobs`, `requests`, `callbacks`.
+- `StateStore` serializes `QueuedJob` and `RequestState` (including issue details, failed jobs,
+  and playlists) as JSON. Finished requests and buttons older than 30 days are pruned at
+  startup; requests with queued jobs are kept.
 
 ## 8. UI Rendering Layer
 
@@ -924,12 +997,13 @@ Startup:
 1. `sync_me_maybe.main.main()` runs.
 2. `Settings.from_env()` reads and validates environment.
 3. Logging is configured.
-4. `MUSIC_DIR` and `DOWNLOAD_TMP_DIR` are created.
+4. `MUSIC_DIR`, `DOWNLOAD_TMP_DIR`, and `DATA_DIR` are created.
 5. `build_application(settings)` creates the Telegram application.
-6. `BotRuntime(settings)` creates shared runtime objects.
+6. `BotRuntime(settings)` opens the database and creates shared services.
 7. Telegram handlers are registered.
 8. `Application.run_polling(...)` starts polling.
-9. `post_init` starts the queue worker and registers bot commands.
+9. `post_init` restores saved requests, buttons, and jobs, starts the queue workers, starts
+   the background library scan, marks resumed requests, and registers bot commands.
 
 Message handling:
 
@@ -938,16 +1012,16 @@ Message handling:
 3. Message is classified as upload, link text, or unsupported input.
 4. A `RequestState` is created.
 5. One or more `QueuedJob` objects are enqueued.
-6. The queue worker serially processes jobs.
+6. Queue workers process jobs, up to `MAX_PARALLEL_DOWNLOADS` at a time.
 7. Status message is edited as work progresses.
 8. Final files are moved to `MUSIC_DIR`.
 9. Final status stays compact and exposes paths, issue details, and reruns through optional buttons.
 
 Shutdown:
 
-1. `post_shutdown` calls `runtime.queue.stop()`.
-2. Queue worker task is cancelled.
-3. In-memory state disappears with the process.
+1. `post_shutdown` calls `runtime.queue.stop()`; unfinished jobs stay in the database.
+2. Background tasks are cancelled and a pending Navidrome scan is sent.
+3. The database connection is closed.
 
 ## 10. Functional Flows
 
@@ -989,7 +1063,7 @@ Message text
 → process_link_job
 → LinkResolver.resolve returns direct URL
 → YtDlpDownloader.download
-→ track_destination
+→ library_destination
 → store_completed_file
 ```
 
@@ -1007,7 +1081,7 @@ Message text
 → TrackEnricher.prepare (Deezer metadata + YouTube Music match)
 → YtDlpDownloader.download
 → TrackEnricher.finalize (tags + cover art)
-→ track_destination
+→ library_destination
 → store_completed_file
 ```
 
@@ -1023,6 +1097,8 @@ Message text
 → list[TrackSearchItem]
 → create child LINK jobs with prebuilt ResolvedTrack
 → each child uses normal link download flow
+→ playlist links: write_playlist(Playlists/<name>.m3u8) after each child
+→ NavidromeClient.request_scan (debounced)
 ```
 
 ### Multiple Links in One Message
@@ -1166,32 +1242,36 @@ Unexpected job errors:
 
 Persistent state:
 
-- Only completed audio files in `MUSIC_DIR`.
+- Audio files, lyrics sidecars, and playlist files in `MUSIC_DIR`.
+- `DATA_DIR/sync-me-maybe.db`: library index, queued jobs (with retry times), request status,
+  and inline-button data.
 - Temp files may briefly exist in `DOWNLOAD_TMP_DIR`.
 
-In-memory state:
+In-memory only:
 
-- Queue.
-- Active job.
-- Request progress.
-- Callback tokens.
-- Upload batch buffers.
-- Collection progress.
+- Upload and link batch buffers (short batching window).
+- Guest invites and grants (by design).
+- Status-edit throttling state.
 
 Concurrency model:
 
 - Telegram handlers are async.
-- Queue processing is serialized by one queue worker.
-- Blocking resolver/downloader/collection work is run in threads where needed.
-- Upload batch flushes use `asyncio.Task`.
+- `MAX_PARALLEL_DOWNLOADS` queue workers process jobs concurrently.
+- Blocking resolver/downloader/tagging/database work runs in threads where needed; the SQLite
+  connection is guarded by a lock.
+- Status edits for one request are serialized by `RequestState.edit_lock` and throttled to one
+  every `status_edit_interval` seconds, with a trailing edit carrying the latest state; terminal
+  states are edited immediately.
+- Navidrome scans are debounced.
 - Cancellation is coordinated with a boolean flag and `threading.Event`.
 
 Consequences:
 
-- Only one download/upload job is processed at a time.
-- Queue positions are simple and predictable.
-- Restarting the bot loses pending jobs and button callback memory.
-- A long active job can delay all later jobs.
+- Two tracks of one playlist can finish in any order; playlist files are written by position.
+- Two requests for the same new song at the same moment can both download it; the second store
+  is skipped because the destination already exists.
+- A restart re-runs jobs that were active, which may re-download a track that had not been
+  stored yet.
 
 ## 16. Security and Access Control
 
@@ -1212,17 +1292,20 @@ Filesystem safety:
 Network behavior:
 
 - The bot fetches public provider metadata using `requests`.
-- With `METADATA_LOOKUP=true`, it also calls `api.deezer.com`, YouTube Music search, and the
-  Deezer/Google image CDNs for cover art.
+- With `METADATA_LOOKUP=true`, it also calls `api.deezer.com`, YouTube Music search,
+  `itunes.apple.com` (Apple track links), `lrclib.net`, and the Deezer/Google image CDNs.
+- With Navidrome configured, it calls the Navidrome Subsonic API. The password is never sent;
+  only a salted token is.
 - The Docker entrypoint drops root privileges to `PUID:PGID` with `setpriv`.
 - The bot invokes `yt-dlp`, which may contact YouTube, provider pages, and search endpoints.
 - Optional cookies can be supplied to `yt-dlp`.
 
 ## 17. Known Limitations
 
-- Queue and request state are not persisted.
-- Callback tokens are lost on restart.
-- There is only one worker, so large playlists are processed serially.
+- Existing pre-0.13 files are not moved into the new layout.
+- Albums are chosen from Deezer's best-scoring match; a song can be filed under a compilation or
+  soundtrack album that has the same recording.
+- The library index needs a persistent `DATA_DIR`; otherwise it is rebuilt at every start.
 - Spotify and Apple Music collection expansion is best-effort and can break when public page structures change.
 - Search-based provider resolution is scored, but can still pick an incorrect match when no confident YouTube Music result exists and plain YouTube search is used.
 - Telegram uploads are not transcoded or metadata-normalized.
@@ -1240,23 +1323,15 @@ Add a new provider:
 
 Add another storage layout:
 
-1. Change or wrap `track_destination`.
+1. Change or wrap `library_destination`.
 2. Keep `store_completed_file` behavior consistent with duplicate handling.
 3. Update README and this document.
 
-Add persistent queueing:
+Add a persisted field:
 
-1. Replace or extend `DownloadQueue`.
-2. Persist `QueuedJob` and `RequestState`.
-3. Rehydrate active/pending jobs at startup.
-4. Redesign callback token storage or derive callback content from persisted request state.
-
-Add parallel downloads:
-
-1. Replace the single `_active` job with multiple active workers.
-2. Change queue position semantics.
-3. Make request updates safe against more concurrent edits.
-4. Consider Telegram edit rate limits.
+1. Add it to `RequestState` or `QueuedJob` with a default value.
+2. Teach `telegram_bot.persistence` to serialize non-JSON types (enums, dataclasses, dates).
+3. Old rows load because unknown fields are ignored and new fields fall back to defaults.
 
 Add tests:
 
@@ -1286,7 +1361,7 @@ src/sync_me_maybe/telegram_bot/app.py
   Application construction and handler registration.
 
 src/sync_me_maybe/telegram_bot/runtime.py
-  Shared runtime objects and in-memory state.
+  Shared runtime objects, services, and state restore.
 
 src/sync_me_maybe/telegram_bot/commands.py
   Slash command handlers.
@@ -1306,8 +1381,14 @@ src/sync_me_maybe/telegram_bot/callbacks.py
 src/sync_me_maybe/telegram_bot/safe_api.py
   Telegram API retry and error wrappers.
 
+src/sync_me_maybe/telegram_bot/persistence.py
+  SQLite persistence for jobs, requests, and buttons.
+
+src/sync_me_maybe/database.py
+  Shared SQLite connection and schema.
+
 src/sync_me_maybe/queueing/queue.py
-  In-memory serialized job queue.
+  Job queue with worker pool, retries, and persistence hooks.
 
 src/sync_me_maybe/music/urls.py
   URL extraction and classification dispatch.
@@ -1339,8 +1420,20 @@ src/sync_me_maybe/music/downloader.py
 src/sync_me_maybe/music/filenames.py
   Title cleanup and filesystem-safe filenames.
 
+src/sync_me_maybe/music/lyrics.py
+  LRCLIB lyrics lookup and sidecar files.
+
 src/sync_me_maybe/library/storage.py
   Final destination paths and file moves.
+
+src/sync_me_maybe/library/index.py
+  Library index for duplicate detection and the startup scan.
+
+src/sync_me_maybe/library/playlists.py
+  .m3u8 playlist files.
+
+src/sync_me_maybe/library/navidrome.py
+  Debounced Navidrome scans via the Subsonic API.
 
 src/sync_me_maybe/ui/messages.py
   Telegram text rendering and inline keyboards.
@@ -1353,12 +1446,15 @@ src/sync_me_maybe/ui/messages.py
 ```text
 Telegram updates
 → telegram_bot handlers/commands/callbacks
-→ runtime request state
-→ in-memory serialized queue
+→ runtime request state (persisted)
+→ queue with a small worker pool (persisted)
 → music resolver / collection resolver
 → enrichment (match + metadata) / downloader / tagging
-→ library storage
-→ Telegram status updates
+→ library index (skip known songs) / library storage / playlists / lyrics
+→ Navidrome scan + Telegram status updates
 ```
 
-The central design choice is a single in-memory runtime with a single queue worker. This keeps the implementation understandable and avoids concurrent file writes or conflicting Telegram status edits. The tradeoff is that all work is serialized and volatile across restarts.
+The central design choice is one process with a small worker pool and a single SQLite file. The
+library index makes duplicates cheap to detect before any download, persistence lets the queue
+and buttons survive restarts, and throttled status edits keep parallel work within Telegram's
+rate limits.
