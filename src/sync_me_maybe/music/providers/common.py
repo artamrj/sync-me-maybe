@@ -52,6 +52,36 @@ def slug_query(url: str) -> str | None:
     return None
 
 
+def duration_from_ms(value: Any) -> int | None:
+    """Convert a millisecond duration into whole seconds."""
+    milliseconds = int_or_none(value)
+    if not milliseconds or milliseconds <= 0:
+        return None
+    return round(milliseconds / 1000)
+
+
+def duration_from_any(source: dict[str, Any]) -> int | None:
+    """Read a track duration from loosely structured provider JSON.
+
+    Handles ``duration_ms``/``durationInMillis`` (milliseconds), plain
+    ``duration`` numbers (milliseconds when large), and ISO 8601 ``PT3M45S``.
+    """
+    for key in ("duration_ms", "durationMs", "durationInMillis"):
+        if (seconds := duration_from_ms(source.get(key))) is not None:
+            return seconds
+    value = source.get("duration")
+    if isinstance(value, dict):
+        return duration_from_ms(value.get("totalMilliseconds") or value.get("milliseconds"))
+    if isinstance(value, int | float) and value > 0:
+        return round(value / 1000) if value > 10_000 else round(value)
+    if isinstance(value, str):
+        match = re.fullmatch(r"P(?:T)?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?", value.strip())
+        if match and any(match.groups()):
+            hours, minutes, secs = (float(part or 0) for part in match.groups())
+            return round(hours * 3600 + minutes * 60 + secs) or None
+    return None
+
+
 def int_or_none(value: Any) -> int | None:
     """Convert loose provider metadata into an integer when possible."""
     try:

@@ -4,16 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sync-me-maybe"
-version = "0.11.0"
+version = "0.12.0"
 description = "Telegram bot that syncs music links and uploads to a local music folder."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
   "beautifulsoup4>=4.12.3",
+  "mutagen>=1.48.1",
   "python-telegram-bot>=22.0,<23.0",
   "requests>=2.32.3",
-  "yt-dlp>=2025.1.15",
+  "yt-dlp[default]>=2026.10.26",
+  "ytmusicapi>=1.12.3",
 ]
 
 [dependency-groups]

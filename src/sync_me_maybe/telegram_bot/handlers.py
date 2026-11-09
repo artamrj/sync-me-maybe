@@ -11,9 +11,15 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import Application, ContextTypes
 
-from sync_me_maybe.library.storage import store_completed_file, track_destination
+from sync_me_maybe.library.storage import (
+    StoreResult,
+    TrackInfo,
+    find_existing_track,
+    store_completed_file,
+    track_destination,
+)
 from sync_me_maybe.music.collections import CollectionResolveError
-from sync_me_maybe.music.downloader import DownloadError
+from sync_me_maybe.music.downloader import DownloadError, planned_track_info
 from sync_me_maybe.music.resolver import ResolvedTrack, ResolveError
 from sync_me_maybe.music.urls import LinkKind, LinkScope, classify_url, extract_urls
 from sync_me_maybe.queueing.queue import JobKind, QueuedJob, RetryJob
@@ -602,47 +608,9 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
         )
         if request:
             set_single_track_context(request, resolved)
-        await safe_chat_action(bot, job.chat_id, ChatAction.UPLOAD_DOCUMENT)
-        if request:
-            request.stage = StatusStage.DOWNLOADING
-            request.download_started_at = request.download_started_at or datetime.now(UTC)
-            request.current = track_label(resolved) or "Direct YouTube Music link."
-            request.detail = None
-            await update_request(runtime, application, request)
-        else:
-            await safe_edit_message(
-                bot,
-                job.chat_id,
-                job.status_message_id,
-                render_status(
-                    StatusStage.DOWNLOADING,
-                    source,
-                    job_detail(job, resolved.search_query or "Direct YouTube Music link."),
-                ),
-            )
-        downloaded = await runtime.downloader.download(
-            resolved, cancel_check=request.cancel_event.is_set if request else None
+        result, info = await download_and_store(
+            job, runtime, application, request, resolved, source
         )
-        if request:
-            set_single_track_context(request, downloaded.info)
-        if request_cancelled(request):
-            # If cancellation happened just after the blocking download returned,
-            # remove the temp file before surfacing the cancellation.
-            downloaded.temp_file.unlink(missing_ok=True)
-            raise DownloadError("Cancelled by user.")
-        destination = track_destination(runtime.settings.music_dir, downloaded.info, ".mp3")
-        if request:
-            request.stage = StatusStage.SAVING
-            request.current = destination.name
-            await update_request(runtime, application, request)
-        else:
-            await safe_edit_message(
-                bot,
-                job.chat_id,
-                job.status_message_id,
-                render_status(StatusStage.SAVING, source, job_detail(job, destination.name)),
-            )
-        result = store_completed_file(downloaded.temp_file, destination, runtime.settings.music_dir)
     except (ResolveError, DownloadError) as exc:
         if await retry_link_job(job, runtime, application, request, source, exc):
             return
@@ -708,7 +676,7 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
                 "skipped",
                 path=result.relative_path,
                 resolved=resolved,
-                downloaded_info=downloaded.info,
+                downloaded_info=info,
             )
         else:
             request.completed += 1
@@ -737,6 +705,76 @@ async def process_link_job(job: QueuedJob, runtime: BotRuntime, application: App
     await update_parent_progress(
         job, runtime, application, "skipped" if result.skipped else "completed"
     )
+
+
+async def download_and_store(
+    job: QueuedJob,
+    runtime: BotRuntime,
+    application: Application,
+    request: RequestState | None,
+    resolved: ResolvedTrack,
+    source: str,
+) -> tuple[StoreResult, TrackInfo]:
+    """Download, tag, and store one resolved track, skipping known duplicates.
+
+    When provider metadata already fixes the final filename, the library is
+    checked before downloading so repeated links and playlists are fast.
+    """
+    bot = application.bot
+    music_dir = runtime.settings.music_dir
+    planned = planned_track_info(resolved)
+    if resolved.title and resolved.artist:
+        existing = find_existing_track(track_destination(music_dir, planned))
+        if existing:
+            return StoreResult(existing, existing.relative_to(music_dir).as_posix(), True), planned
+
+    prepared = await runtime.enricher.prepare(resolved)
+    resolved = prepared.resolved
+    await safe_chat_action(bot, job.chat_id, ChatAction.UPLOAD_DOCUMENT)
+    if request:
+        request.stage = StatusStage.DOWNLOADING
+        request.download_started_at = request.download_started_at or datetime.now(UTC)
+        request.current = track_label(resolved) or "Direct YouTube Music link."
+        request.detail = None
+        await update_request(runtime, application, request)
+    else:
+        await safe_edit_message(
+            bot,
+            job.chat_id,
+            job.status_message_id,
+            render_status(
+                StatusStage.DOWNLOADING,
+                source,
+                job_detail(job, resolved.search_query or "Direct YouTube Music link."),
+            ),
+        )
+    downloaded = await runtime.downloader.download(
+        resolved, cancel_check=request.cancel_event.is_set if request else None
+    )
+    if request:
+        set_single_track_context(request, downloaded.info)
+    if request_cancelled(request):
+        # If cancellation happened just after the blocking download returned,
+        # remove the temp file before surfacing the cancellation.
+        downloaded.temp_file.unlink(missing_ok=True)
+        raise DownloadError("Cancelled by user.")
+    await runtime.enricher.finalize(downloaded, prepared)
+    destination = track_destination(music_dir, downloaded.info, downloaded.temp_file.suffix)
+    if request:
+        request.stage = StatusStage.SAVING
+        request.current = destination.name
+        await update_request(runtime, application, request)
+    else:
+        await safe_edit_message(
+            bot,
+            job.chat_id,
+            job.status_message_id,
+            render_status(StatusStage.SAVING, source, job_detail(job, destination.name)),
+        )
+    result = store_completed_file(
+        downloaded.temp_file, destination, music_dir, match_any_format=True
+    )
+    return result, downloaded.info
 
 
 async def process_collection_job(
@@ -826,6 +864,8 @@ async def process_collection_job(
                 collection_owner=collection.owner,
                 collection_title=collection.title,
                 collection_url=classified.url,
+                duration_seconds=track.duration_seconds,
+                isrc=track.isrc,
             )
             child = QueuedJob(
                 kind=JobKind.LINK,
@@ -892,6 +932,8 @@ async def process_collection_job(
             collection_owner=collection.owner,
             collection_title=collection.title,
             collection_url=classified.url,
+            duration_seconds=track.duration_seconds,
+            isrc=track.isrc,
         )
         child = QueuedJob(
             kind=JobKind.LINK,

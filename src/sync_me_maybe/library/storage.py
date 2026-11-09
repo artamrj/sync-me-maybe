@@ -79,18 +79,45 @@ def upload_destination(music_dir: Path, filename: str | None) -> Path:
     return music_dir / safe_name
 
 
+# Audio containers treated as "the same track" when only the extension differs,
+# so switching AUDIO_FORMAT does not re-download songs already in the library.
+LIBRARY_AUDIO_EXTENSIONS = (".mp3", ".m4a", ".opus", ".ogg", ".flac", ".aac", ".wav")
+
+
+def find_existing_track(destination: Path) -> Path | None:
+    """Return an existing library file for this track in any audio format."""
+    if destination.exists():
+        return destination
+    for extension in LIBRARY_AUDIO_EXTENSIONS:
+        candidate = destination.with_suffix(extension)
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def store_completed_file(
-    source: Path, destination: Path, music_dir: Path, skip_existing: bool = True
+    source: Path,
+    destination: Path,
+    music_dir: Path,
+    skip_existing: bool = True,
+    match_any_format: bool = False,
 ) -> StoreResult:
     """Move a completed temp file into the music library.
 
     Existing destination files are treated as already synced. The temporary
     source is removed in that case so repeated uploads/downloads do not pile up.
+    With ``match_any_format``, the same name with another audio extension also
+    counts as already synced.
     """
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if skip_existing and destination.exists():
+    existing = (
+        find_existing_track(destination)
+        if match_any_format
+        else (destination if destination.exists() else None)
+    )
+    if skip_existing and existing:
         source.unlink(missing_ok=True)
-        return StoreResult(destination, _relative(destination, music_dir), True)
+        return StoreResult(existing, _relative(existing, music_dir), True)
 
     shutil.move(str(source), str(destination))
     return StoreResult(destination, _relative(destination, music_dir), False)

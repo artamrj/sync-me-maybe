@@ -21,12 +21,18 @@ from sync_me_maybe.music.providers.base import (
     ResolvedTrack,
     TrackSearchItem,
 )
-from sync_me_maybe.music.providers.common import clean_slug, int_or_none, slug_query
+from sync_me_maybe.music.providers.common import (
+    clean_slug,
+    duration_from_ms,
+    int_or_none,
+    slug_query,
+)
 from sync_me_maybe.music.providers.public_scrape import PublicCollectionScraper
 from sync_me_maybe.music.urls import ClassifiedLink, LinkKind, LinkScope
 
 APPLE_API_BASE = "https://amp-api.music.apple.com"
 APPLE_WEB_BASE = "https://music.apple.com"
+ITUNES_LOOKUP_URL = "https://itunes.apple.com/lookup"
 
 
 @dataclass(frozen=True)
@@ -65,7 +71,12 @@ class AppleMusicProvider:
         return ClassifiedLink(LinkKind.APPLE_MUSIC, url)
 
     async def resolve_track(self, link: ClassifiedLink) -> ResolvedTrack:
-        """Build a YouTube Music search query from the Apple Music URL."""
+        """Resolve track metadata with the iTunes lookup API, then URL slugs."""
+        track_id = apple_track_id(link.url)
+        if track_id:
+            looked_up = await asyncio.to_thread(self._itunes_track, link.url, track_id)
+            if looked_up:
+                return looked_up
         query = self._apple_music_query(link.url)
         if not query:
             raise ProviderError(
@@ -76,6 +87,41 @@ class AppleMusicProvider:
             download_url=f"ytsearch1:{query}",
             search_query=query,
             title=query,
+        )
+
+    def _itunes_track(self, url: str, track_id: str) -> ResolvedTrack | None:
+        """Look up the real track title/artist; album URLs only carry the album slug."""
+        try:
+            response = requests.get(
+                ITUNES_LOOKUP_URL,
+                params={"id": track_id, "entity": "song", "country": apple_storefront(url)},
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except (requests.RequestException, ValueError):
+            return None
+        results = data.get("results") if isinstance(data, dict) else None
+        song = next(
+            (r for r in results or [] if isinstance(r, dict) and r.get("kind") == "song"),
+            None,
+        )
+        if not song:
+            return None
+        title = clean_title(song.get("trackName"))
+        artist = clean_title(song.get("artistName"))
+        if not title:
+            return None
+        query = " ".join(part for part in [artist, title] if part)
+        return ResolvedTrack(
+            source_url=url,
+            download_url=f"ytsearch1:{query}",
+            search_query=query,
+            title=title,
+            artist=artist,
+            album=clean_title(song.get("collectionName")),
+            track_number=int_or_none(song.get("trackNumber")),
+            duration_seconds=duration_from_ms(song.get("trackTimeMillis")),
         )
 
     async def expand_collection(self, link: ClassifiedLink) -> ExpandedCollection:
@@ -258,6 +304,8 @@ class AppleMusicProvider:
             album=clean_title(attributes.get("albumName")),
             track_number=int_or_none(attributes.get("trackNumber")),
             source_url=attributes.get("url") if isinstance(attributes.get("url"), str) else None,
+            duration_seconds=duration_from_ms(attributes.get("durationInMillis")),
+            isrc=clean_title(attributes.get("isrc")),
         )
 
     def _apple_music_query(self, url: str) -> str | None:
@@ -269,3 +317,23 @@ class AppleMusicProvider:
             if index + 1 < len(parts):
                 return clean_slug(parts[index + 1])
         return slug_query(url)
+
+
+def apple_track_id(url: str) -> str | None:
+    """Return the numeric song ID from ``?i=`` or ``/song/<slug>/<id>`` URLs."""
+    parsed = urlparse(url)
+    track_id = next(iter(parse_qs(parsed.query).get("i", [])), "")
+    if track_id.isdigit():
+        return track_id
+    parts = [part for part in parsed.path.split("/") if part]
+    if "song" in parts and parts[-1].isdigit():
+        return parts[-1]
+    return None
+
+
+def apple_storefront(url: str) -> str:
+    """Return the two-letter storefront from an Apple Music URL path."""
+    parts = [part for part in urlparse(url).path.split("/") if part]
+    if parts and len(parts[0]) == 2 and parts[0].isalpha():
+        return parts[0].lower()
+    return "us"

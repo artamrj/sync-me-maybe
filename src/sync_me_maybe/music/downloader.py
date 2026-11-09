@@ -16,7 +16,25 @@ import yt_dlp
 from sync_me_maybe.library.storage import TrackInfo
 
 from .filenames import sanitize_filename
+from .matching import clean_channel_name, clean_video_title
 from .resolver import ResolvedTrack
+
+# Output formats. "m4a" and "opus" keep YouTube's original audio stream when it
+# already has that codec (no lossy re-encode); "mp3" always transcodes.
+AUDIO_FORMATS: dict[str, dict[str, str]] = {
+    "m4a": {
+        "format": "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best",
+        "codec": "m4a",
+        "quality": "256",
+    },
+    "opus": {
+        "format": "bestaudio[acodec=opus]/bestaudio/best",
+        "codec": "opus",
+        "quality": "160",
+    },
+    "mp3": {"format": "bestaudio/best", "codec": "mp3", "quality": "320"},
+}
+DEFAULT_AUDIO_FORMAT = "m4a"
 
 
 class DownloadError(RuntimeError):
@@ -33,17 +51,25 @@ class DownloadedTrack:
 
     temp_file: Path
     info: TrackInfo
+    duration_seconds: int | None = None
 
 
 class YtDlpDownloader:
     """Async-friendly wrapper around blocking yt-dlp downloads."""
 
     def __init__(
-        self, tmp_dir: Path, cookies_file: Path | None = None, max_seconds: int = 900
+        self,
+        tmp_dir: Path,
+        cookies_file: Path | None = None,
+        max_seconds: int = 900,
+        audio_format: str = DEFAULT_AUDIO_FORMAT,
     ) -> None:
+        if audio_format not in AUDIO_FORMATS:
+            raise ValueError(f"Unsupported audio format: {audio_format}")
         self.tmp_dir = tmp_dir
         self.cookies_file = cookies_file
         self.max_seconds = max_seconds
+        self.audio_format = audio_format
 
     async def download(
         self, resolved: ResolvedTrack, cancel_check: Callable[[], bool] | None = None
@@ -80,21 +106,23 @@ class YtDlpDownloader:
             check_cancel()
             check_timeout()
 
-        # yt-dlp writes to a unique run ID, then ffmpeg converts the best audio
-        # stream to MP3 so downstream storage always sees a predictable format.
+        # yt-dlp writes to a unique run ID, then ffmpeg extracts the audio into
+        # the configured container, copying the stream when no re-encode is needed.
+        audio = AUDIO_FORMATS[self.audio_format]
         options: dict[str, Any] = {
-            "format": "bestaudio/best",
+            "format": audio["format"],
             "noplaylist": True,
             "outtmpl": output_template,
             "quiet": True,
+            "noprogress": True,
             "no_warnings": True,
             "socket_timeout": 30,
             "progress_hooks": [progress_hook],
             "postprocessors": [
                 {
                     "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "320",
+                    "preferredcodec": audio["codec"],
+                    "preferredquality": audio["quality"],
                 }
             ],
         }
@@ -123,7 +151,7 @@ class YtDlpDownloader:
                 raise DownloadError("No matching YouTube Music result found.", retryable=False)
             info = entries[0]
 
-        temp_file = self.tmp_dir / f"{run_id}.mp3"
+        temp_file = self.tmp_dir / f"{run_id}.{audio['codec']}"
         if not temp_file.exists():
             matches = list(self.tmp_dir.glob(f"{run_id}.*"))
             if not matches:
@@ -132,18 +160,35 @@ class YtDlpDownloader:
                 )
             temp_file = matches[0]
 
-        return DownloadedTrack(temp_file=temp_file, info=_track_info(info, resolved))
+        duration = info.get("duration") if isinstance(info, dict) else None
+        return DownloadedTrack(
+            temp_file=temp_file,
+            info=_track_info(info, resolved),
+            duration_seconds=round(duration) if isinstance(duration, int | float) else None,
+        )
+
+
+def planned_track_info(resolved: ResolvedTrack) -> TrackInfo:
+    """Storage metadata known before download (provider metadata only)."""
+    return _track_info({}, resolved)
 
 
 def _track_info(info: dict[str, Any], resolved: ResolvedTrack) -> TrackInfo:
     """Merge provider metadata with yt-dlp metadata for storage naming."""
     title = resolved.title or _string(info.get("track")) or _string(info.get("title"))
-    artist = resolved.artist or _string(info.get("artist")) or _string(info.get("uploader"))
+    artist = (
+        resolved.artist
+        or _string(info.get("artist"))
+        or clean_channel_name(_string(info.get("uploader")))
+    )
     album = resolved.album or _string(info.get("album"))
     track_number = resolved.track_number or _int(info.get("track_number"))
 
     if title and not resolved.title:
         title = _strip_youtube_noise(title)
+        if artist and not info.get("track"):
+            # Video titles often repeat the channel: "Artist - Song (Official Video)".
+            title = sanitize_filename(clean_video_title(title, [artist]), "Unknown Title")
 
     return TrackInfo(
         title=title,

@@ -9,6 +9,7 @@ from sync_me_maybe.config import ConfigError, Settings, parse_user_ids
 from sync_me_maybe.library.storage import (
     StoreResult,
     TrackInfo,
+    find_existing_track,
     store_completed_file,
     track_destination,
     upload_destination,
@@ -311,3 +312,46 @@ def test_ui_renderers_and_keyboards_show_expected_status() -> None:
         "🔁 Rerun failed",
         "🩺 Health",
     ]
+
+
+def test_settings_audio_format_and_metadata_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:token")
+    monkeypatch.setenv("ALLOWED_TELEGRAM_USER_IDS", "1")
+    monkeypatch.delenv("AUDIO_FORMAT", raising=False)
+    monkeypatch.delenv("METADATA_LOOKUP", raising=False)
+    defaults = Settings.from_env()
+    assert defaults.audio_format == "m4a"
+    assert defaults.metadata_lookup is True
+
+    monkeypatch.setenv("AUDIO_FORMAT", " OPUS ")
+    monkeypatch.setenv("METADATA_LOOKUP", "off")
+    custom = Settings.from_env()
+    assert custom.audio_format == "opus"
+    assert custom.metadata_lookup is False
+
+    monkeypatch.setenv("AUDIO_FORMAT", "wav")
+    with pytest.raises(ConfigError, match="AUDIO_FORMAT"):
+        Settings.from_env()
+    monkeypatch.setenv("AUDIO_FORMAT", "mp3")
+    monkeypatch.setenv("METADATA_LOOKUP", "maybe")
+    with pytest.raises(ConfigError, match="METADATA_LOOKUP"):
+        Settings.from_env()
+
+
+def test_store_completed_file_matches_existing_track_in_other_format(tmp_path: Path) -> None:
+    music = tmp_path / "music"
+    music.mkdir()
+    (music / "Artist - Song.mp3").write_text("old", encoding="utf-8")
+    assert find_existing_track(music / "Artist - Song.m4a") == music / "Artist - Song.mp3"
+    assert find_existing_track(music / "Other.m4a") is None
+
+    source = tmp_path / "new.m4a"
+    source.write_text("new", encoding="utf-8")
+    result = store_completed_file(source, music / "Artist - Song.m4a", music, match_any_format=True)
+    assert result == StoreResult(music / "Artist - Song.mp3", "Artist - Song.mp3", True)
+    assert not source.exists()
+
+    upload = tmp_path / "upload.m4a"
+    upload.write_text("new", encoding="utf-8")
+    stored = store_completed_file(upload, music / "Artist - Song.m4a", music)
+    assert not stored.skipped

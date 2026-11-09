@@ -21,7 +21,7 @@ from sync_me_maybe.music.providers.base import (
     ResolvedTrack,
     TrackSearchItem,
 )
-from sync_me_maybe.music.providers.common import slug_query
+from sync_me_maybe.music.providers.common import duration_from_ms, slug_query
 from sync_me_maybe.music.providers.public_scrape import PublicCollectionScraper, dedupe_tracks
 from sync_me_maybe.music.urls import ClassifiedLink, LinkKind, LinkScope
 
@@ -346,7 +346,16 @@ def track_from_spotify_playlist_item(
         album=album,
         track_number=_int_or_none(track.get("track_number")) or fallback_number,
         source_url=source_url,
+        duration_seconds=duration_from_ms(track.get("duration_ms")),
+        isrc=_spotify_isrc(track),
     )
+
+
+def _spotify_isrc(track: dict[str, Any]) -> str | None:
+    external_ids = track.get("external_ids")
+    if not isinstance(external_ids, dict):
+        return None
+    return clean_title(external_ids.get("isrc"))
 
 
 def _nested_get(data: Any, *keys: str) -> Any:

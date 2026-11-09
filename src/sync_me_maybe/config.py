@@ -10,11 +10,25 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+AUDIO_FORMAT_CHOICES = ("m4a", "opus", "mp3")
+
 
 class ConfigError(ValueError):
     """Raised when required environment configuration is missing or invalid."""
 
     pass
+
+
+def parse_bool(name: str, raw: str | None, default: bool) -> bool:
+    """Parse common true/false spellings from an environment variable."""
+    if raw is None or not raw.strip():
+        return default
+    value = raw.strip().casefold()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigError(f"{name} must be true or false")
 
 
 def parse_user_ids(raw: str | None) -> set[int]:
@@ -51,6 +65,8 @@ class Settings:
     max_download_seconds: int = 900
     max_collection_tracks: int = 1000
     upload_batch_window_seconds: float = 2.0
+    audio_format: str = "m4a"
+    metadata_lookup: bool = True
     log_level: str = "INFO"
 
     @classmethod
@@ -92,6 +108,13 @@ class Settings:
         if upload_batch_window_seconds < 0:
             raise ConfigError("UPLOAD_BATCH_WINDOW_SECONDS must be non-negative")
 
+        audio_format = os.environ.get("AUDIO_FORMAT", "m4a").strip().casefold() or "m4a"
+        if audio_format not in AUDIO_FORMAT_CHOICES:
+            raise ConfigError(f"AUDIO_FORMAT must be one of: {', '.join(AUDIO_FORMAT_CHOICES)}")
+        metadata_lookup = parse_bool(
+            "METADATA_LOOKUP", os.environ.get("METADATA_LOOKUP"), default=True
+        )
+
         music_dir = Path(os.environ.get("MUSIC_DIR", "./music"))
 
         return cls(
@@ -104,5 +127,7 @@ class Settings:
             max_download_seconds=max_download_seconds,
             max_collection_tracks=max_collection_tracks,
             upload_batch_window_seconds=upload_batch_window_seconds,
+            audio_format=audio_format,
+            metadata_lookup=metadata_lookup,
             log_level=os.environ.get("LOG_LEVEL", "INFO").strip().upper() or "INFO",
         )

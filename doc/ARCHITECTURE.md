@@ -96,6 +96,8 @@ Settings fields:
 - `max_download_seconds: int`
 - `max_collection_tracks: int`
 - `upload_batch_window_seconds: float`
+- `audio_format: str`
+- `metadata_lookup: bool`
 - `log_level: str`
 
 Environment variables:
@@ -109,6 +111,8 @@ Environment variables:
 - `MAX_DOWNLOAD_SECONDS`: default `900`.
 - `MAX_COLLECTION_TRACKS`: default `1000`.
 - `UPLOAD_BATCH_WINDOW_SECONDS`: default `2`.
+- `AUDIO_FORMAT`: `m4a` (default), `opus`, or `mp3`.
+- `METADATA_LOOKUP`: default `true`; disables YouTube Music, Deezer, and cover-art requests when `false`.
 - `LOG_LEVEL`: default `INFO`.
 
 Validation:
@@ -290,13 +294,20 @@ Single link job flow:
 
 1. Mark request as preparing.
 2. Resolve source into a `ResolvedTrack`.
-3. Mark request as downloading.
-4. Download through `YtDlpDownloader`.
-5. Compute final path with `track_destination`.
-6. Mark request as saving.
-7. Move completed file into the library with `store_completed_file`.
-8. Update counts and paths.
-9. Render final success, skipped, or failed state.
+3. If provider metadata already fixes the filename and the library has that track in any
+   audio format, record it as skipped without downloading.
+4. `TrackEnricher.prepare` looks up canonical metadata and replaces `ytsearch1:` with the
+   best-scoring YouTube Music result.
+5. Mark request as downloading.
+6. Download through `YtDlpDownloader` in the configured `AUDIO_FORMAT`.
+7. `TrackEnricher.finalize` writes tags and cover art into the temp file.
+8. Compute final path with `track_destination` using the downloaded file extension.
+9. Mark request as saving.
+10. Move completed file into the library with `store_completed_file(match_any_format=True)`.
+11. Update counts and paths.
+12. Render final success, skipped, or failed state.
+
+Steps 3-10 live in `download_and_store`.
 
 Collection job flow:
 
@@ -583,7 +594,7 @@ Resolver behavior:
 - Spotify, Apple Music, and Shazam links become YouTube search URLs using `ytsearch1:<query>`.
 - Spotify first tries `https://open.spotify.com/oembed`.
 - Spotify falls back to page metadata or URL slug parsing.
-- Apple Music uses album slug or general URL slug parsing.
+- Apple Music track links (`?i=<id>` or `/song/<slug>/<id>`) use the public iTunes lookup API for title, artist, album, and duration, then fall back to album slug or general URL slug parsing.
 - Shazam uses track slug parsing.
 - Numeric Shazam track URLs can be fetched and parsed from page metadata.
 
@@ -680,11 +691,56 @@ Provider implementation details:
 - Unsupported provider capabilities raise provider errors that resolver facades convert into user-facing resolver errors.
 - Spotify and Apple public-page scraping is isolated under provider code because those page structures are fragile.
 
+### `music.matching`
+
+File: `src/sync_me_maybe/music/matching.py`
+
+Pure scoring helpers plus the YouTube Music search adapter.
+
+- `MatchTarget`, `Candidate`, `MatchScore`, `Thresholds`, `STRICT`.
+- `score(target, candidate)` weighs title (45%), artist (35%), and duration (20%) similarity,
+  rejects duration differences above the threshold, and penalizes alternate-version words
+  (live, cover, remix, sped up, ...) that the target title does not contain.
+- `YouTubeMusicMatcher.find(target)` searches `ytmusicapi` with `filter="songs"` first and
+  falls back to `filter="videos"` with `STRICT` thresholds. It returns a `YouTubeMatch` with
+  a `https://www.youtube.com/watch?v=<id>` download URL.
+- Text helpers: `normalize`, `base_title`, `primary_artist`, `clean_channel_name`,
+  `clean_video_title`.
+
+### `music.metadata`
+
+File: `src/sync_me_maybe/music/metadata.py`
+
+- `DeezerMetadata.lookup(target, isrc)` queries the public Deezer API by ISRC, then by an
+  advanced and a plain search scored with `music.matching`.
+- `CanonicalTrack` carries title, artists, album, album artist, track/disc number, release
+  date, duration, ISRC, genres, and a 1000px cover URL.
+
+### `music.tagging`
+
+File: `src/sync_me_maybe/music/tagging.py`
+
+- `write_tags(path, AudioTags, CoverArt | None)` writes tags with `mutagen` for MP3 (ID3v2.4),
+  M4A, FLAC, Ogg Opus, and Ogg Vorbis, including multi-value `ARTISTS` and embedded covers.
+- Unreadable or unsupported files return `False` instead of raising.
+
+### `music.enrichment`
+
+File: `src/sync_me_maybe/music/enrichment.py`
+
+- `TrackEnricher.prepare(resolved) -> PreparedTrack` runs before download for `ytsearch`
+  tracks.
+- `TrackEnricher.finalize(downloaded, prepared)` runs after download. Without a canonical
+  match it retries the Deezer lookup with the downloaded title, artist, and duration, and
+  only trusts it when the duration agrees within 5 seconds.
+- All network failures are logged and fall back to the previous behavior; jobs never fail
+  because of enrichment. `METADATA_LOOKUP=false` skips every lookup but still tags files.
+
 ### `music.downloader`
 
 File: `src/sync_me_maybe/music/downloader.py`
 
-This module downloads and converts audio through `yt-dlp`.
+This module downloads and extracts audio through `yt-dlp`.
 
 Main names:
 
@@ -695,11 +751,12 @@ Main names:
 Download behavior:
 
 - Runs blocking `yt-dlp` work in a thread via `asyncio.to_thread`.
-- Uses `bestaudio/best`.
-- Disables playlist downloads with `noplaylist=True`.
+- Picks the format selector and `FFmpegExtractAudio` codec from `AUDIO_FORMATS`:
+  `m4a` and `opus` copy YouTube's original stream when the codec already matches; `mp3`
+  transcodes at 320 kbps.
+- Disables playlist downloads with `noplaylist=True` and progress output with `noprogress`.
 - Outputs to a unique temp filename in `DOWNLOAD_TMP_DIR`.
-- Converts to MP3 using `FFmpegExtractAudio`.
-- Uses preferred MP3 quality `320`.
+- Returns the downloaded duration in `DownloadedTrack.duration_seconds`.
 - Supports optional cookies file.
 - Uses a 30-second socket timeout.
 - Enforces `MAX_DOWNLOAD_SECONDS` through progress hooks.
@@ -709,17 +766,18 @@ Temporary file behavior:
 
 - Each download uses a UUID-based output template.
 - Partial files matching that UUID are deleted on cancellation, timeout, or `yt-dlp` failure.
-- Final output is expected as `.mp3`, but the code falls back to any matching extension if necessary.
+- Final output is expected with the configured codec extension, but the code falls back to any matching extension if necessary.
 
 Track metadata:
 
 - `_track_info(info, resolved)` builds `TrackInfo`.
 - Explicit resolved metadata wins over `yt-dlp` metadata.
 - Title fallback order: resolved title, `info["track"]`, `info["title"]`.
-- Artist fallback order: resolved artist, `info["artist"]`, `info["uploader"]`.
+- Artist fallback order: resolved artist, `info["artist"]`, `info["uploader"]` without `- Topic`/`VEVO` suffixes.
 - Album fallback order: resolved album, `info["album"]`.
 - Track number fallback order: resolved track number, `info["track_number"]`.
-- YouTube noise such as "official video" or "lyrics" is stripped from fallback titles.
+- YouTube noise such as "official video" or "lyrics" is stripped from fallback titles, and a leading `Artist - ` prefix is removed when it repeats the artist.
+- `planned_track_info(resolved)` returns the storage metadata known before download.
 
 ### `music.filenames`
 
@@ -770,11 +828,13 @@ Main names:
 Link download destination format:
 
 ```text
-Artist - Title.mp3
-Title.mp3
-Owner - Collection/Artist - Title.mp3
-Collection(<collection URL>)/Artist - Title.mp3
+Artist - Title.<ext>
+Title.<ext>
+Owner - Collection/Artist - Title.<ext>
+Collection(<collection URL>)/Artist - Title.<ext>
 ```
+
+`<ext>` follows `AUDIO_FORMAT` (`.m4a`, `.opus`, or `.mp3`).
 
 Rules:
 
@@ -795,6 +855,9 @@ Uploads are placed directly under `MUSIC_DIR`.
 Duplicate behavior:
 
 - `store_completed_file` skips existing destination files by default.
+- With `match_any_format=True` (link downloads), `find_existing_track` also treats the same
+  name with another audio extension as existing, so switching `AUDIO_FORMAT` does not
+  duplicate older files.
 - If skipped, the temp source file is deleted.
 - Existing files are not overwritten.
 
@@ -941,7 +1004,9 @@ Message text
 → LinkResolver.resolve
 → metadata or slug becomes search query
 → download_url = ytsearch1:<query>
+→ TrackEnricher.prepare (Deezer metadata + YouTube Music match)
 → YtDlpDownloader.download
+→ TrackEnricher.finalize (tags + cover art)
 → track_destination
 → store_completed_file
 ```
@@ -995,13 +1060,17 @@ Important dataclasses:
 Declared in `pyproject.toml`:
 
 - `beautifulsoup4`: HTML parsing for metadata and public collection extraction.
+- `mutagen`: audio tag and cover-art writing.
 - `python-telegram-bot`: Telegram bot framework.
-- `requests`: HTTP fetching for metadata and public pages.
-- `yt-dlp`: YouTube/search download and some playlist metadata extraction.
+- `requests`: HTTP fetching for metadata, Deezer, cover art, and public pages.
+- `yt-dlp[default]`: YouTube/search download and some playlist metadata extraction, with
+  `yt-dlp-ejs` for YouTube's JavaScript challenges.
+- `ytmusicapi`: unauthenticated YouTube Music search.
 
-Required system dependency:
+Required system dependencies:
 
-- `ffmpeg`: required by `yt-dlp` postprocessor for MP3 extraction.
+- `ffmpeg`: required by the `yt-dlp` audio extraction postprocessor.
+- `deno`: JavaScript runtime used by `yt-dlp` for YouTube (bundled in the Docker image).
 
 Development dependencies:
 
@@ -1143,6 +1212,9 @@ Filesystem safety:
 Network behavior:
 
 - The bot fetches public provider metadata using `requests`.
+- With `METADATA_LOOKUP=true`, it also calls `api.deezer.com`, YouTube Music search, and the
+  Deezer/Google image CDNs for cover art.
+- The Docker entrypoint drops root privileges to `PUID:PGID` with `setpriv`.
 - The bot invokes `yt-dlp`, which may contact YouTube, provider pages, and search endpoints.
 - Optional cookies can be supplied to `yt-dlp`.
 
@@ -1152,10 +1224,9 @@ Network behavior:
 - Callback tokens are lost on restart.
 - There is only one worker, so large playlists are processed serially.
 - Spotify and Apple Music collection expansion is best-effort and can break when public page structures change.
-- Search-based provider resolution can download an incorrect YouTube match.
+- Search-based provider resolution is scored, but can still pick an incorrect match when no confident YouTube Music result exists and plain YouTube search is used.
 - Telegram uploads are not transcoded or metadata-normalized.
 - Provider refactor tests cover classification, resolver fallbacks, public scraping helpers, YouTube playlist expansion, and collection limits.
-- `src/sync_me_maybe/__init__.py` reports `__version__ = "0.1.0"` while `pyproject.toml` declares project version `0.9.0`.
 
 ## 18. Extension Points
 
@@ -1250,8 +1321,20 @@ src/sync_me_maybe/music/collections.py
 src/sync_me_maybe/music/providers/
   Provider-specific classification, metadata lookup, scraping, and collection expansion.
 
+src/sync_me_maybe/music/matching.py
+  Candidate scoring and YouTube Music search.
+
+src/sync_me_maybe/music/metadata.py
+  Deezer canonical metadata lookup.
+
+src/sync_me_maybe/music/tagging.py
+  Tag and cover-art writing.
+
+src/sync_me_maybe/music/enrichment.py
+  Pre-download matching and post-download tagging around the downloader.
+
 src/sync_me_maybe/music/downloader.py
-  yt-dlp download and MP3 conversion.
+  yt-dlp download and audio extraction.
 
 src/sync_me_maybe/music/filenames.py
   Title cleanup and filesystem-safe filenames.
@@ -1272,7 +1355,8 @@ Telegram updates
 → telegram_bot handlers/commands/callbacks
 → runtime request state
 → in-memory serialized queue
-→ music resolver / collection resolver / downloader
+→ music resolver / collection resolver
+→ enrichment (match + metadata) / downloader / tagging
 → library storage
 → Telegram status updates
 ```

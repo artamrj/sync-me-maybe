@@ -24,6 +24,8 @@ def settings(tmp_path: Path) -> Settings:
         music_dir=tmp_path / "music",
         download_tmp_dir=tmp_path / "tmp",
         upload_batch_window_seconds=0,
+        # Keep tests offline: no Deezer, YouTube Music, or cover-art requests.
+        metadata_lookup=False,
     )
 
 

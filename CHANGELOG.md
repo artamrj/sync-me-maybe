@@ -7,6 +7,42 @@ then move them into a dated version section when `pyproject.toml` is bumped.
 
 ## Unreleased
 
+## 0.12.0 - 2026-11-09
+
+### Added
+
+- Added scored YouTube Music matching for Spotify, Apple Music, Shazam, and playlist/album
+  tracks. Candidates are compared on title, artist, and duration, alternate versions (live,
+  cover, remix, sped up, ...) are penalized, and plain YouTube search is only a last resort.
+- Added best-effort track metadata from the public Deezer API (by ISRC or scored search) and
+  tag writing for every link download: title, artists, album, album artist, track/disc
+  number, date, ISRC, genre, source URL, and embedded cover art (m4a, mp3, opus, ogg, flac).
+- Added iTunes lookup for Apple Music track links, so `album/...?i=<id>` links search for the
+  actual song instead of the album name.
+- Added `AUDIO_FORMAT` (`m4a`, `opus`, `mp3`) and `METADATA_LOOKUP` settings.
+- Added a Docker entrypoint that runs the bot as `PUID:PGID`.
+- Added Deno to the Docker image so `yt-dlp` has the JavaScript runtime YouTube now requires.
+
+### Changed
+
+- Link downloads now default to `m4a` and keep YouTube's original audio stream instead of
+  re-encoding to MP3 320, roughly halving file size at the same quality. Set
+  `AUDIO_FORMAT=mp3` to keep the previous behavior.
+- Duplicate detection for link downloads now recognizes the same track in another audio
+  format and runs before downloading when provider metadata already fixes the filename.
+- Direct YouTube links no longer repeat the artist in the filename
+  (`Artist - Artist - Song`), and `- Topic`/`VEVO` channel suffixes are removed from artists.
+- Docker containers now drop root privileges. Files created by older root-running images may
+  need a one-time `chown` to `PUID:PGID` (see README).
+- Updated `yt-dlp` to `2026.10.26` with its `default` extras and added `ytmusicapi` and
+  `mutagen` dependencies.
+- Bumped `pyproject.toml`, `uv.lock`, and package `__version__` from `0.11.0` to `0.12.0`.
+
+### Fixed
+
+- Fixed `PUID`/`PGID` being passed to the container but never applied.
+- Stopped `yt-dlp` download progress bars from filling container logs.
+
 ## 0.11.0 - 2026-07-20
 
 ### Added

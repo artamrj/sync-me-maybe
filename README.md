@@ -13,13 +13,22 @@ Telegram bot that downloads music links and Telegram audio uploads into a local 
 
 Spotify, Apple Music, and Shazam links are used as search inputs. The bot does not bypass DRM or download directly from those providers; it resolves a matching YouTube or YouTube Music result and stores that audio. Spotify and Apple Music playlists and albums use tokenless public extraction and may fail if the public page does not expose track data. Large Spotify playlists can page beyond the first 100 public embed tracks when Spotify exposes an anonymous public token.
 
+## Matching and Tags
+
+- Search-based links (Spotify, Apple Music, Shazam, and playlist/album tracks) are matched against YouTube Music's official song results first. Candidates are scored on title, artist, and duration; live, cover, remix, sped-up, and similar versions are penalized unless the original title asks for them. Music videos are tried next with stricter rules, and plain YouTube search is the last resort.
+- Apple Music track links use Apple's public iTunes lookup to get the real song title and artist instead of the album name in the URL.
+- Track metadata is looked up in the public Deezer API (no account or key needed), by ISRC when the provider exposes one, otherwise by a scored search. Only confident matches are used.
+- Every link download is tagged before it is stored: title, artists, album, album artist, track and disc number, release date, ISRC, genre, source URL, and embedded cover art. Library scanners such as Navidrome organize music by these tags.
+- Direct YouTube links get the same lookup after download, but only when the duration also matches within a few seconds.
+- Lookups are best-effort. If Deezer or YouTube Music is unreachable, the bot falls back to the previous search behavior and still tags the file with what it knows. Set `METADATA_LOOKUP=false` to disable all lookups.
+
 ## Storage Behavior
 
-- Link downloads are converted to MP3 at up to 320 kbps via `yt-dlp` and `ffmpeg`.
+- Link downloads use `AUDIO_FORMAT`, which defaults to `m4a`. `m4a` and `opus` keep YouTube's original audio stream without re-encoding (typically AAC ~128 kbps or Opus ~130-160 kbps), so files are about half the size of the old MP3 320 output at the same quality. `mp3` keeps the previous 320 kbps transcode.
 - Telegram uploads are stored in their original format with their original filename when available.
-- Link downloads are stored directly under `MUSIC_DIR` as `Artist - Title.mp3` when artist metadata exists.
-- If artist metadata is missing, link downloads are stored as `Title.mp3`.
-- Existing target files are skipped instead of overwritten.
+- Link downloads are stored directly under `MUSIC_DIR` as `Artist - Title.<ext>` when artist metadata exists.
+- If artist metadata is missing, link downloads are stored as `Title.<ext>`.
+- Existing target files are skipped instead of overwritten. For link downloads, the same name in another audio format (for example an older `Artist - Title.mp3`) also counts as already synced, and the check happens before downloading when provider metadata already fixes the filename.
 - Playlist and album links are expanded into individual track jobs, capped by `MAX_COLLECTION_TRACKS`.
 - Playlist and album downloads are stored under `Owner - Collection Name` folders when provider metadata exposes a real owner. If the owner is missing or looks like a URL, the folder falls back to `Collection Name(<collection URL>)`.
 - Finished Telegram requests with failed jobs show a `Rerun failed` button that queues only the failed items again.
@@ -38,6 +47,8 @@ DOWNLOAD_TMP_DIR=./tmp/sync-me-maybe
 MAX_DOWNLOAD_SECONDS=900
 MAX_COLLECTION_TRACKS=1000
 UPLOAD_BATCH_WINDOW_SECONDS=2
+AUDIO_FORMAT=m4a
+METADATA_LOOKUP=true
 RECEIVED_STICKER_ID=
 LOG_LEVEL=INFO
 ```
@@ -51,7 +62,7 @@ uv sync
 uv run sync-me-maybe
 ```
 
-`ffmpeg` must be available on `PATH` for audio conversion.
+`ffmpeg` must be available on `PATH` for audio extraction. For reliable YouTube downloads, also install [Deno](https://deno.com/) (`yt-dlp` uses it as its JavaScript runtime); the Docker image already includes it.
 
 ## Docker Deployment
 
@@ -83,7 +94,9 @@ The compose file passes `PUID` and `PGID` into the container and mounts:
 
 Use writable host folders for the configured UID/GID. The app sets `MUSIC_DIR=/music` and `DOWNLOAD_TMP_DIR=/tmp/sync-me-maybe` inside the container, so the container remains stateless except for mounted music, temporary downloads, and optional cookies. To use cookies, set `YTDLP_COOKIES_FILE=/config/cookies.txt` and point `YTDLP_COOKIES_FILE_HOST` at the host cookies file.
 
-The compose file intentionally does not use Docker's `user: ${PUID}:${PGID}` setting because some NAS runtimes reject that switch with `operation not permitted`. If your NAS reports `uid=1000(arta) gid=10(admin)`, use `PUID=1000` and `PGID=10`.
+The compose file intentionally does not use Docker's `user: ${PUID}:${PGID}` setting because some NAS runtimes reject that switch with `operation not permitted`. Instead, the container starts as root and its entrypoint drops to `PUID:PGID` before starting the bot, so new music files are owned by that host user. If the runtime does not allow switching users, the bot logs a warning and keeps running as root. If your NAS reports `uid=1000(arta) gid=10(admin)`, use `PUID=1000` and `PGID=10`.
+
+Upgrading from 0.11 or earlier: older images ran as root, so files and playlist folders they created may be owned by root. Give them to the configured user once, for example `sudo chown -R 1000:10 /path/to/music`, then run `/health`.
 
 Tags:
 
@@ -102,6 +115,9 @@ See [CHANGELOG.md](CHANGELOG.md) for release history and versioning notes.
 - `MAX_DOWNLOAD_SECONDS`: maximum download duration before a job fails. Defaults to `900`.
 - `MAX_COLLECTION_TRACKS`: maximum playlist or album tracks to enqueue. Defaults to `1000`.
 - `UPLOAD_BATCH_WINDOW_SECONDS`: seconds to group quickly forwarded audio uploads. Defaults to `2`; set `0` to disable batching.
+- `AUDIO_FORMAT`: output format for link downloads: `m4a` (default), `opus`, or `mp3`. `m4a` plays in nearly every client; `opus` is slightly more efficient; `mp3` re-encodes at 320 kbps.
+- `METADATA_LOOKUP`: `true` (default) or `false`. Enables YouTube Music matching, Deezer metadata lookup, and cover-art downloads. Files are still tagged with provider metadata when disabled.
+- `PUID` / `PGID` (Docker only): host user and group the bot runs as and that owns new files.
 - `RECEIVED_STICKER_ID`: optional Telegram sticker file ID shown for 5 seconds as a temporary acknowledgement after the user sends a supported link or upload.
 - `LOG_LEVEL`: Python logging level. Defaults to `INFO`.
 

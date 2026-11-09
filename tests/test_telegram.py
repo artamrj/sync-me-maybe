@@ -13,6 +13,7 @@ from sync_me_maybe.config import Settings
 from sync_me_maybe.library.storage import TrackInfo
 from sync_me_maybe.music.collections import CollectionResolveError
 from sync_me_maybe.music.downloader import DownloadedTrack, DownloadError
+from sync_me_maybe.music.enrichment import PreparedTrack
 from sync_me_maybe.music.providers.base import ExpandedCollection, TrackSearchItem
 from sync_me_maybe.music.resolver import ResolvedTrack
 from sync_me_maybe.music.urls import classify_url
@@ -1027,3 +1028,58 @@ def test_upload_job_from_buffered_sets_display_title() -> None:
     )
     assert job.display_title == "File 1/2"
     assert job.upload and job.upload.filename == "song.mp3"
+
+
+@pytest.mark.asyncio
+async def test_process_link_job_skips_known_track_before_download_and_uses_enricher(
+    runtime: BotRuntime,
+    fake_application: SimpleNamespace,
+) -> None:
+    music = runtime.settings.music_dir
+    music.mkdir(parents=True, exist_ok=True)
+    (music / "Artist - Known.mp3").write_text("old", encoding="utf-8")
+    classified = classify_url("https://open.spotify.com/track/abc")
+    request = RequestState("r-known", 1, 10, "spotify", 1)
+    runtime.requests[request.id] = request
+    job = QueuedJob(
+        JobKind.LINK, 1, 2, 10, 42, "spotify", classified_link=classified, request_id=request.id
+    )
+    request.job_ids.append(job.id)
+    runtime.resolver.resolve = AsyncMock(
+        return_value=ResolvedTrack("src", "ytsearch1:Artist Known", title="Known", artist="Artist")
+    )
+    runtime.downloader.download = AsyncMock()
+    runtime.enricher.prepare = AsyncMock()
+
+    await process_link_job(job, runtime, fake_application)
+
+    runtime.downloader.download.assert_not_awaited()
+    runtime.enricher.prepare.assert_not_awaited()
+    assert request.skipped == 1
+    assert request.paths == ["Artist - Known.mp3"]
+
+    new_request = RequestState("r-new", 1, 11, "spotify", 1)
+    runtime.requests[new_request.id] = new_request
+    new_job = QueuedJob(
+        JobKind.LINK, 1, 2, 11, 42, "spotify", classified_link=classified, request_id="r-new"
+    )
+    new_request.job_ids.append(new_job.id)
+    searched = ResolvedTrack("src", "ytsearch1:Artist New", title="New", artist="Artist")
+    matched = replace(searched, download_url="https://www.youtube.com/watch?v=x")
+    runtime.resolver.resolve = AsyncMock(return_value=searched)
+    runtime.enricher.prepare = AsyncMock(return_value=PreparedTrack(matched))
+    runtime.enricher.finalize = AsyncMock(return_value=True)
+    temp = runtime.settings.download_tmp_dir / "new.m4a"
+    temp.parent.mkdir(parents=True, exist_ok=True)
+    temp.write_text("audio", encoding="utf-8")
+    runtime.downloader.download = AsyncMock(
+        return_value=DownloadedTrack(temp, TrackInfo("New", "Artist"))
+    )
+
+    await process_link_job(new_job, runtime, fake_application)
+
+    assert runtime.downloader.download.await_args.args[0] == matched
+    runtime.enricher.finalize.assert_awaited_once()
+    assert new_request.completed == 1
+    assert new_request.paths == ["Artist - New.m4a"]
+    assert (music / "Artist - New.m4a").exists()

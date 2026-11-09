@@ -26,6 +26,8 @@ class ResolvedTrack:
     collection_owner: str | None = None
     collection_title: str | None = None
     collection_url: str | None = None
+    duration_seconds: int | None = None
+    isrc: str | None = None
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,8 @@ class TrackSearchItem:
     album: str | None = None
     track_number: int | None = None
     source_url: str | None = None
+    duration_seconds: int | None = None
+    isrc: str | None = None
 
     @property
     def search_query(self) -> str:

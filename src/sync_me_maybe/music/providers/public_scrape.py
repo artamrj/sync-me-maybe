@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 
 from sync_me_maybe.music.filenames import clean_title
 from sync_me_maybe.music.providers.base import ExpandedCollection, ProviderError, TrackSearchItem
-from sync_me_maybe.music.providers.common import int_or_none
+from sync_me_maybe.music.providers.common import duration_from_any, int_or_none
 
 
 class PublicCollectionScraper:
@@ -156,6 +156,7 @@ def tracks_from_entries(entries: list[Any]) -> list[TrackSearchItem]:
                 track_number=int_or_none(entry.get("track_number") or entry.get("trackNumber"))
                 or index,
                 source_url=entry.get("url") or entry.get("webpage_url"),
+                duration_seconds=duration_from_any(entry),
             )
         )
     return dedupe_tracks(tracks)
@@ -252,7 +253,13 @@ def track_from_dict(value: dict[str, Any]) -> TrackSearchItem | None:
     ):
         return None
     return TrackSearchItem(
-        title=title, artist=artist, album=album, track_number=track_number, source_url=url
+        title=title,
+        artist=artist,
+        album=album,
+        track_number=track_number,
+        source_url=url,
+        duration_seconds=duration_from_any(source),
+        isrc=clean_title(source.get("isrc")) if isinstance(source.get("isrc"), str) else None,
     )
 
 

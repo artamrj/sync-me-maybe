@@ -17,6 +17,7 @@ from sync_me_maybe.auth import is_allowed, is_private_chat
 from sync_me_maybe.config import Settings
 from sync_me_maybe.music.collections import CollectionResolver
 from sync_me_maybe.music.downloader import YtDlpDownloader
+from sync_me_maybe.music.enrichment import TrackEnricher
 from sync_me_maybe.music.resolver import LinkResolver
 from sync_me_maybe.music.urls import ClassifiedLink
 from sync_me_maybe.queueing.queue import DownloadQueue, JobKind, QueuedJob, UploadPayload
@@ -166,7 +167,9 @@ class BotRuntime:
             tmp_dir=settings.download_tmp_dir,
             cookies_file=settings.ytdlp_cookies_file,
             max_seconds=settings.max_download_seconds,
+            audio_format=settings.audio_format,
         )
+        self.enricher = TrackEnricher(lookups_enabled=settings.metadata_lookup)
 
     def allowed(self, update: Update) -> bool:
         """Check whether the effective Telegram user can use protected actions."""

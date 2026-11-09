@@ -4,13 +4,20 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+import requests
 
 from sync_me_maybe.config import Settings
 from sync_me_maybe.music.collections import CollectionResolveError, CollectionResolver
-from sync_me_maybe.music.providers.apple import AppleMusicProvider
+from sync_me_maybe.music.providers.apple import (
+    AppleMusicProvider,
+    apple_storefront,
+    apple_track_id,
+)
 from sync_me_maybe.music.providers.base import ExpandedCollection, ProviderError, TrackSearchItem
 from sync_me_maybe.music.providers.common import (
     clean_slug,
+    duration_from_any,
+    duration_from_ms,
     int_or_none,
     slug_query,
     usable_slug_query,
@@ -128,7 +135,11 @@ async def test_spotify_resolution_prefers_oembed_then_metadata_then_slug() -> No
 async def test_apple_and_shazam_slug_resolution_and_numeric_fetch() -> None:
     apple_link = classify_url("https://music.apple.com/us/album/song-name/123?i=456")
     shazam_link = classify_url("https://www.shazam.com/track/123456/song-name-artist-name")
-    apple = await AppleMusicProvider().resolve_track(apple_link)
+    with patch(
+        "sync_me_maybe.music.providers.apple.requests.get",
+        side_effect=requests.ConnectionError("offline"),
+    ):
+        apple = await AppleMusicProvider().resolve_track(apple_link)
     shazam = await ShazamProvider().resolve_track(shazam_link)
     assert apple.download_url == "ytsearch1:song name"
     assert shazam.download_url == "ytsearch1:song name artist name"
@@ -589,3 +600,67 @@ async def test_collection_resolver_enforces_scope_empty_and_limit() -> None:
     many_tracks = ExpandedCollection(spotify_tracks(1, 534))
     provider.expand_collection.return_value = many_tracks
     assert await resolver.expand(link) == many_tracks
+
+
+def test_duration_helpers_read_milliseconds_seconds_and_iso() -> None:
+    assert duration_from_ms(214_400) == 214
+    assert duration_from_ms(None) is None
+    assert duration_from_any({"duration_ms": 200_000}) == 200
+    assert duration_from_any({"durationInMillis": 61_000}) == 61
+    assert duration_from_any({"duration": 214_000}) == 214
+    assert duration_from_any({"duration": 214}) == 214
+    assert duration_from_any({"duration": "PT3M45S"}) == 225
+    assert duration_from_any({"duration": {"totalMilliseconds": 5_000}}) == 5
+    assert duration_from_any({"duration": "soon"}) is None
+    assert duration_from_any({}) is None
+
+
+def test_spotify_playlist_item_keeps_duration_and_isrc() -> None:
+    track = track_from_spotify_playlist_item(
+        {
+            "track": {
+                "name": "Song",
+                "artists": [{"name": "Artist"}],
+                "duration_ms": 180_400,
+                "external_ids": {"isrc": "USABC1234567"},
+            }
+        }
+    )
+    assert track is not None
+    assert track.duration_seconds == 180
+    assert track.isrc == "USABC1234567"
+
+
+@pytest.mark.asyncio
+async def test_apple_track_links_use_itunes_lookup_for_real_track_metadata() -> None:
+    url = "https://music.apple.com/de/album/random-access-memories/617154241?i=617154366"
+    assert apple_track_id(url) == "617154366"
+    assert apple_track_id("https://music.apple.com/us/song/get-lucky/617154366") == "617154366"
+    assert apple_track_id("https://music.apple.com/us/album/name/123") is None
+    assert apple_storefront(url) == "de"
+
+    response = Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "results": [
+            {"wrapperType": "collection"},
+            {
+                "kind": "song",
+                "trackName": "Get Lucky",
+                "artistName": "Daft Punk, Pharrell Williams & Nile Rodgers",
+                "collectionName": "Random Access Memories",
+                "trackNumber": 8,
+                "trackTimeMillis": 369629,
+            },
+        ]
+    }
+    with patch("sync_me_maybe.music.providers.apple.requests.get", return_value=response) as get:
+        resolved = await AppleMusicProvider().resolve_track(classify_url(url))
+
+    assert get.call_args.kwargs["params"] == {"id": "617154366", "entity": "song", "country": "de"}
+    assert resolved.title == "Get Lucky"
+    assert resolved.album == "Random Access Memories"
+    assert resolved.duration_seconds == 370
+    assert resolved.download_url == (
+        "ytsearch1:Daft Punk, Pharrell Williams & Nile Rodgers Get Lucky"
+    )
