@@ -1,3 +1,25 @@
+<div align="center">
+
+# ⚠️ DEPRECATED
+
+# This project has moved to [🐦 magpie-fi](https://github.com/artamrj/magpie-fi)
+
+## **sync-me-maybe is no longer developed. Please use [magpie-fi](https://github.com/artamrj/magpie-fi) instead.**
+
+</div>
+
+> [!CAUTION]
+> **This repository is deprecated.** sync-me-maybe and [ununknown](https://github.com/artamrj/ununknown) were merged into one project:
+> **[magpie-fi](https://github.com/artamrj/magpie-fi)**.
+>
+> - No new features, no fixes and no security updates here.
+> - magpie-fi does everything sync-me-maybe did, and more: it also identifies every song, fixes its tags, cover and lyrics, and asks you when it is not sure.
+> - **To install and use it, go to <https://github.com/artamrj/magpie-fi>.**
+
+The text below is the old documentation. It is kept only for reference.
+
+---
+
 # sync-me-maybe
 
 Telegram bot that downloads music links and Telegram audio uploads into a local music folder for Navidrome or any other library scanner.
